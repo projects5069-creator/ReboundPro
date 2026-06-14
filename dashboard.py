@@ -34,7 +34,9 @@ NUM_WATCH = ["drop_pct_from_open", "close_pct_from_open", "pct_change_prevclose"
              "spy_change_pct", "sector_etf_change_pct", "market_cap",
              # intraday-path numerics (M2 fields, exposed in M3)
              "first_cross_price", "first_cross_drop_pct", "intraday_low",
-             "recovery_from_low_pct", "scans_count"]
+             "recovery_from_low_pct", "scans_count",
+             # gradual-drop numerics
+             "drop_pct_window", "ref_close_window"]
 NUM_POST = ["ref_close", "max_recovery_pct", "max_further_drop_pct",
             "last_close_pct", "forward_days_available", "horizon",
             "day_of_max_recovery", "day_of_max_drop"] \
@@ -51,7 +53,7 @@ PCT_COLS = {
     "drop_pct_from_open", "close_pct_from_open", "pct_change_prevclose",
     "spy_change_pct", "sector_etf_change_pct", "recovery_from_low_pct",
     "first_cross_drop_pct", "max_recovery_pct", "max_further_drop_pct",
-    "last_close_pct", "pct_from_open",
+    "last_close_pct", "pct_from_open", "drop_pct_window",
 } | {f"max_recovery_{w}d" for w in config.POST_ANALYSIS_SUBWINDOWS} \
   | {f"max_further_drop_{w}d" for w in config.POST_ANALYSIS_SUBWINDOWS}
 INT_COLS = {
@@ -63,6 +65,7 @@ INT_COLS = {
 FLOAT_COLS = {
     "price", "open", "high", "low_so_far", "prev_close", "rsi_14",
     "volume_ratio", "ref_close", "first_cross_price", "intraday_low",
+    "ref_close_window",
 }
 
 
@@ -162,6 +165,13 @@ if watch.empty:
     st.warning("watchlist_live ריק — עדיין לא נאספו נתונים.")
     st.stop()
 
+# hypothesis tag — legacy rows (pre-M3 gradual_drop) have no/blank drop_kind;
+# treat them as intraday_drop so the filter/breakdown stay coherent.
+if "drop_kind" not in watch.columns:
+    watch["drop_kind"] = "intraday_drop"
+else:
+    watch["drop_kind"] = watch["drop_kind"].replace("", "intraday_drop").fillna("intraday_drop")
+
 tab_health, tab_watch, tab_card, tab_post, tab_stats = st.tabs(
     ["🩺 Collection Health", "📋 Watchlist", "🃏 Stock Card",
      "🎯 Post-Analysis", "📊 Descriptive Stats"])
@@ -216,26 +226,32 @@ with tab_health:
 # ── 2. WATCHLIST ─────────────────────────────────────────────────────────────
 with tab_watch:
     st.subheader("📋 watchlist_live — נתונים גולמיים")
-    f = st.columns(3)
+    f = st.columns(4)
     sel_day = f[0].multiselect("scan_date", days, default=days)
+    kinds = sorted(watch["drop_kind"].dropna().unique()) if "drop_kind" in watch else []
+    sel_kind = f[1].multiselect("drop_kind", kinds, default=kinds)
     buckets = sorted(watch["liquidity_bucket"].dropna().unique()) if "liquidity_bucket" in watch else []
-    sel_bucket = f[1].multiselect("liquidity bucket", buckets, default=buckets)
+    sel_bucket = f[2].multiselect("liquidity bucket", buckets, default=buckets)
     sectors = sorted(watch["sector"].dropna().unique()) if "sector" in watch else []
-    sel_sector = f[2].multiselect("sector", sectors, default=sectors)
+    sel_sector = f[3].multiselect("sector", sectors, default=sectors)
 
     view = watch[watch["scan_date"].isin(sel_day)]
+    if sel_kind:
+        view = view[view["drop_kind"].isin(sel_kind)]
     if sel_bucket:
         view = view[view["liquidity_bucket"].isin(sel_bucket)]
     if sel_sector:
         view = view[view["sector"].isin(sel_sector)]
 
-    cols = ["scan_date", "ticker", "exchange", "drop_pct_from_open", "price",
-            "liquidity_bucket", "sector", "market_regime", "drop_type",
-            "adv_dollar", "market_cap", "rsi_14",
+    cols = ["scan_date", "ticker", "drop_kind", "exchange", "drop_pct_from_open",
+            "drop_pct_window", "price", "liquidity_bucket", "sector", "market_regime",
+            "drop_type", "adv_dollar", "market_cap", "rsi_14",
             # intraday-path fields (source: intraday scanner) — exposed in M3
             "source", "first_cross_at", "first_cross_price", "first_cross_drop_pct",
             "intraday_low", "intraday_low_at", "recovery_from_low_pct",
-            "reversal_confirmed", "scans_count", "last_update_at"]
+            "reversal_confirmed", "scans_count", "last_update_at",
+            # gradual-drop fields
+            "lookback_trading_days", "ref_close_window"]
     cols = [c for c in cols if c in view.columns]
     st.caption(f"{len(view)} שורות · כולל שדות-המסלול התוך-יומי (ריקים לשורות EOD)")
     st.dataframe(styled(view[cols].sort_values("drop_pct_from_open")),
@@ -258,14 +274,21 @@ with tab_card:
         wr = watch[(watch["ticker"] == sel_t) & (watch["scan_date"] == sel_d)]
         if not wr.empty:
             r0 = wr.iloc[0]
-            m = st.columns(5)
-            kpi(m[0], "drop מהפתיחה", f"{r0.get('drop_pct_from_open'):.2f}%"
-                if pd.notna(r0.get("drop_pct_from_open")) else "—")
-            kpi(m[1], "price (D0)", f"{r0.get('price'):,.2f}"
+            kind = r0.get("drop_kind") or "intraday_drop"
+            if kind == "gradual_drop":
+                lb = r0.get("lookback_trading_days")
+                lb = int(lb) if pd.notna(lb) else config.GRADUAL_LOOKBACK_DAYS
+                drop_label, drop_val = f"drop {lb}d (הדרגתי)", r0.get("drop_pct_window")
+            else:
+                drop_label, drop_val = "drop מהפתיחה", r0.get("drop_pct_from_open")
+            m = st.columns(6)
+            kpi(m[0], "drop_kind", kind)
+            kpi(m[1], drop_label, f"{drop_val:.2f}%" if pd.notna(drop_val) else "—")
+            kpi(m[2], "price (D0)", f"{r0.get('price'):,.2f}"
                 if pd.notna(r0.get("price")) else "—")
-            kpi(m[2], "liquidity", r0.get("liquidity_bucket", "—"))
-            kpi(m[3], "sector", r0.get("sector", "—"))
-            kpi(m[4], "regime", r0.get("market_regime", "—"))
+            kpi(m[3], "liquidity", r0.get("liquidity_bucket", "—"))
+            kpi(m[4], "sector", r0.get("sector", "—"))
+            kpi(m[5], "regime", r0.get("market_regime", "—"))
 
         # 1) intraday time-series (price + pct path across D0–D20)
         st.markdown("**מסלול תוך-יומי מדורג (intraday_timeseries · D0–D3 כל 10ד' · D4–D20 ~3/יום)**")
@@ -381,6 +404,12 @@ with tab_post:
 with tab_stats:
     st.subheader("📊 סטטיסטיקה תיאורית על כל הדאטה שנצבר")
     st.caption("תיאור הנתונים בלבד — ללא ניקוד, דירוג או תוחלת רווח.")
+    if "drop_kind" in watch:
+        kc = watch["drop_kind"].value_counts().reset_index()
+        kc.columns = ["drop_kind", "count"]
+        st.plotly_chart(px.bar(kc, x="drop_kind", y="count",
+                               title="פילוח לפי השערה (intraday_drop מול gradual_drop)"),
+                        width="stretch")
     g = st.columns(2)
     if "liquidity_bucket" in watch:
         bc = watch["liquidity_bucket"].value_counts().reset_index()

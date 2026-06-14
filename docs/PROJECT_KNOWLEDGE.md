@@ -25,12 +25,13 @@
 | `catalyst.py` | Finnhub news D-3..D + earnings-flag → `news_snapshot` (raw בלבד) |
 | `post_analysis_collector.py` | D1..D+20 + תת-חלונות D+3/5/10/20; halt/delist/pending מפורש |
 | `intraday_timeseries.py` | M3 מעקב מדורג → `intraday_timeseries`: D0–D3 כל 10ד', D4–D20 ~3/יום (open/mid/close); key=(scan_date,ticker,timestamp); self-gating לחלונות D4–D20 (עמיד לדריפט-cron); רוכב על טריגר ה-intraday; floor יורש מ-watchlist; hours-guard מ-`intraday_scanner` |
+| `gradual_scanner.py` | M3 סורק-EOD **השערה נפרדת** (`gradual_drop`): close היום ≥10% מתחת ל-close לפני 5 ימי-מסחר (מסנן Finviz `Performance: Week -10%` + אימות yfinance); אותה רצפת-נזילות; מתייג `drop_kind="gradual_drop"`, `source="gradual_eod"`; דדופ חוצה-סוגים 20 ימי-מסחר (`recent_capture_set`); משתמש ב-helpers של `scanner.py` ללא נגיעה בו; קורא fundamentals inline. **value-trap: פונדמנטלי=פיצ'ר לא פילטר; אפס החלטת-כניסה; הכרעה ל-M4.** post_analysis/intraday_timeseries/catalyst קולטים את השורות אוטומטית |
 | `sheets_manager.py` | I/O ל-Sheets; `upsert_by_key` (merge לפי שם-עמודה, migration-safe); creds: file→st.secrets→env |
 | `config.py` | מקור-אמת לפרמטרים/טאבים/סכמות (כולל `TIMESERIES_HEADER`, `TS_TIER1_MAX_DAY=3`, `TS_TIER2_MAX_DAY=20`) |
 | `dashboard.py` | Streamlit, תצוגה בלבד (Health/Watchlist/**Stock Card**/Post/Stats); helper `styled()` לעיצוב (`%` בתא/פסיקים/2-ספרות) |
 
 ## תזמון
-- `daily.yml` — EOD `30 22 * * 1-5` UTC: scanner → catalyst → post_analysis.
+- `daily.yml` — EOD `30 22 * * 1-5` UTC: scanner → **gradual_scanner** → catalyst → post_analysis. (gradual רץ אחרי scanner כדי שדדופ אותו-יום יעבוד, ולפני catalyst/post כדי שחדשות+forward יקלטו את שורות gradual.)
 - `intraday.yml` — `*/10 13-21 * * 1-5` UTC (baseline) + `workflow_dispatch`. הטריגר האמין: **cron-job.org** → workflow_dispatch (America/New_York 9–16, כל 10ד'); ה-guard `is_market_hours()` הוא רשת-ביטחון. שני צעדים: `intraday_scanner.py` ואז `intraday_timeseries.py` (מעקב מדורג).
 
 ## Dashboard
@@ -39,8 +40,9 @@ Streamlit Cloud, נפרס מ-`dashboard.py` (branch `main`). Cloud מתקין מ
 - **תיקוני-תצוגה (M3):** helper `styled()` (pandas Styler) — `%` בתא, פסיקי-אלפים, עיגול 2-ספרות; שדות-המסלול התוך-יומי חשופים בטבלת ה-watchlist.
 
 ## המספרים המרכזיים
+- **שתי השערות נאספות בנפרד** (עמודה `drop_kind` ב-watchlist_live): `intraday_drop` (צניחה חדה תוך-יומית, scanner+intraday_scanner) ו-`gradual_drop` (ירידה הדרגתית ≥10% ב-5 ימי-מסחר, gradual_scanner). `source` נשאר provenance (eod_close/intraday/gradual_eod). דדופ חוצה-סוגים: 20 ימי-מסחר. שורות legacy ללא drop_kind נחשבות intraday_drop בדashboard.
 - רצפת-נזילות: מחיר ≥ $5 · ADV$ ≥ $5M · שווי ≥ $300M (מוציא nano/micro).
-- סף צניחה: ≥10% מהפתיחה (grid M4: 7/10/15).
+- סף צניחה: ≥10% מהפתיחה (grid M4: 7/10/15) · סף gradual: ≥10% ב-5 ימי-מסחר.
 - חלון תוצאות: D1..D+20 (+ תת-חלונות 3/5/10/20).
 - עלות-סטרס M4: 0.50% round-trip.
 

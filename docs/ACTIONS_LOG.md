@@ -17,6 +17,7 @@
 | 2026-06-14 | `40ad829` | deps: הצהרת תלויות dashboard ב-pyproject + uv.lock (Cloud צורך uv.lock) |
 | 2026-06-14 | _(this commit)_ | docs: מערך-תיעוד מלא (MASTERPLAN/ACTIONS_LOG/TASKS/PROJECT_KNOWLEDGE) + חיווט-זיכרון ב-CLAUDE.md |
 | 2026-06-14 | _(this commit)_ | M3: מעקב מדורג (`intraday_timeseries.py` + טאב + צעד workflow, D0–D3 10ד'/D4–D20 ~3/יום) · כרטיס-מניה בדashboard (intraday/post/fundamentals-Finviz/news, view-only) · תיקוני-תצוגה רוחביים (`%` בתא/פסיקים/2-ספרות + חשיפת שדות-מסלול ב-watchlist) |
+| 2026-06-14 | _(this commit)_ | M3.4: מקור-איסוף `gradual_drop` (`gradual_scanner.py` + צעד ב-daily.yml בין scanner ל-catalyst) — close היום ≥10% מתחת ל-5 ימי-מסחר אחורה (Finviz `Performance: Week -10%`, אומת חי 422 מועמדים + ADBE -18.86%) · עמודה `drop_kind` migration-safe + תיוג intraday_drop ב-scanner/intraday_scanner · דדופ חוצה-סוגים 20 ימי-מסחר · dashboard סינון/תצוגה לפי drop_kind · אזהרת value-trap מתועדת |
 
 ## Next
 <!-- הוסף כאן ערכים חדשים מתוארכים בכל סוף-סשן -->

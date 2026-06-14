@@ -156,6 +156,7 @@ def build(row, scan_date, spy_chg, now, existing):
         "intraday_low": round(run_low, 2), "intraday_low_at": run_low_at,
         "recovery_from_low_pct": recovery, "reversal_confirmed": reversal,
         "scans_count": scans, "last_update_at": now,
+        "drop_kind": "intraday_drop",
     }
     return snap, "ok"
 

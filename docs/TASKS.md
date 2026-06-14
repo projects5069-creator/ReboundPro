@@ -10,6 +10,7 @@
 - **M3.1 — מעקב מדורג** (`intraday_timeseries.py` + טאב `intraday_timeseries`): שורת-זמן לכל מניה במעקב, רזולוציה מדורגת D0–D3 כל 10ד' / D4–D20 ~3 נק'/יום (open/mid/close), key=(scan_date,ticker,timestamp), upsert בטוח לריצה-חוזרת, רוכב על טריגר ה-intraday הקיים. לא נוגע ב-post_analysis. צעד נוסף ב-`intraday.yml`.
 - **M3.2 — כרטיס מניה** (טאב "🃏 Stock Card" ב-dashboard): בחירת ticker+scan_date · גרף intraday_timeseries (price/pct) · תוצאות forward מ-post_analysis · תעודת-זהות פונדמנטלית בסגנון Finviz (Valuation/Margins/Debt/Short/52W/Ownership) · חדשות מ-news_snapshot. view-only.
 - **M3.3 — תיקוני-תצוגה רוחביים**: `%` בתא · פסיקי-אלפים · עיגול 2-ספרות (helper `styled()` עם Styler) · חשיפת שדות-המסלול התוך-יומי ב-watchlist (first_cross_*/intraday_low*/recovery_from_low_pct/reversal_confirmed/scans_count/last_update_at).
+- **M3.4 — gradual_drop** (`gradual_scanner.py` + צעד ב-daily.yml): מקור-איסוף **נפרד** לצניחה הדרגתית — close היום ≥10% מתחת ל-close לפני 5 ימי-מסחר (מסנן Finviz `Performance: Week -10%`, אומת מול yfinance), אותה רצפת-נזילות. עמודה חדשה `drop_kind` (intraday_drop/gradual_drop, migration-safe) + שדות gradual (lookback_trading_days/drop_pct_window/ref_close_window). דדופ/cooldown חוצה-סוגים = 20 ימי-מסחר. מעקב-קדימה (intraday_timeseries/post_analysis) + שכבות point-in-time (fundamentals/news) נקלטים אוטומטית — אותה תשתית. dashboard: סינון+תצוגה לפי drop_kind. **אזהרת value-trap מתועדת — פונדמנטלי כפיצ'ר לא פילטר; אפס החלטת-כניסה; הכרעה ל-M4.**
 
 ## ▶ NOW (M3 — צבירה)
 - לצבור דאטה (forward, בזמן-אמת).

@@ -221,7 +221,7 @@ def build_snapshot(row, scan_date, spy_chg, now_et):
         "sector_etf_change_pct": sec_chg, "market_regime": market_regime(spy_chg),
         "drop_type": classify_drop_type(spy_chg, sec_chg),
         "scanned_at": now_et.strftime("%Y-%m-%d %H:%M:%S %Z"),
-        "source": "eod_close",
+        "source": "eod_close", "drop_kind": "intraday_drop",
     }
     return snap, "ok"
 

@@ -42,6 +42,11 @@ jobs:
           APCA_API_SECRET_KEY: ${{ secrets.APCA_API_SECRET_KEY }}
         run: python scanner.py
 
+      - name: Gradual scanner — stocks down >=10% over 5 trading days (separate hypothesis)
+        env:
+          REBOUND_SHEET_ID: ${{ secrets.REBOUND_SHEET_ID }}
+        run: python gradual_scanner.py   # runs AFTER scanner so same-day intraday_drop dedups; BEFORE catalyst/post so news+forward pick gradual rows
+
       - name: Catalyst — capture point-in-time news per candidate (Finnhub)
         env:
           REBOUND_SHEET_ID: ${{ secrets.REBOUND_SHEET_ID }}

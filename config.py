@@ -59,6 +59,25 @@ TS_TIER2_MAX_DAY = 20       # D4–D20: ~3 points/day (open / mid / close approx
 # pct_from_open is measured vs the CURRENT day's open (intraday move), so on D0
 # it equals the drop and on later days it is that session's intraday change.
 
+# ── Gradual-drop scanner (M3 — SEPARATE hypothesis from intraday_drop) ────────
+# Flags stocks whose latest close is >= GRADUAL_DROP_THRESHOLD below the close
+# GRADUAL_LOOKBACK_DAYS *trading* days ago — a slow decline, not a one-day crash.
+# Collection only — fundamentals captured as a FEATURE, never a filter/veto, and
+# there is NO entry decision (value-trap bias: "strong metrics -> rebound" is the
+# very thing M4 must test, separately from intraday_drop). Same hard liquidity
+# floor as intraday_drop. Writes watchlist_live with drop_kind="gradual_drop";
+# the existing forward layers (intraday_timeseries / post_analysis / catalyst /
+# fundamentals) pick the rows up automatically (no per-source filtering).
+GRADUAL_LOOKBACK_DAYS = 5        # trading days back for the decline window
+GRADUAL_DROP_THRESHOLD = 10.0    # % ; close_today <= -this vs close N trading days ago
+GRADUAL_DEDUP_WINDOW = 20        # trading days; skip if the ticker was captured (ANY
+                                 #   drop_kind) within this window — cross-strategy
+                                 #   dedup + gradual self-cooldown (one event/ticker/~month)
+# Finviz "Performance" screener filter ("Week" = last 5 trading days). The exact
+# from-open rule is re-confirmed via yfinance, so this is only a server-side net.
+FINVIZ_PERF_PREFILTER = "Week -10%"   # token 1w10u
+FINVIZ_PERF_FALLBACK = "Week Down"    # broader net if the primary value is rejected
+
 # ── Fundamentals snapshot (Finviz quote ticker_fundament) ────────────────────
 # Frozen field list (the 90 Finviz fields minus the junk 'Trades'). Captured
 # point-in-time per candidate — some fields (Short Float, Inst Own, Recom,
@@ -158,6 +177,12 @@ WATCHLIST_HEADER = [
     "reversal_confirmed",        # path flag (>= REVERSAL_CONFIRM_PCT off low)
     "scans_count",               # how many intraday scans touched this row
     "last_update_at",
+    # hypothesis tag + gradual-drop fields (M3 — separate collection source).
+    # APPEND ONLY (upsert_by_key merges old rows by column NAME → migration-safe).
+    "drop_kind",                 # "intraday_drop" | "gradual_drop"
+    "lookback_trading_days",     # gradual: GRADUAL_LOOKBACK_DAYS ; intraday: ""
+    "drop_pct_window",           # gradual: % drop over the lookback window ; intraday: ""
+    "ref_close_window",          # gradual: close N trading days ago ; intraday: ""
 ]
 CREDS_PATH = os.path.join(os.path.dirname(__file__), "google_credentials.json")
 
