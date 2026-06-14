@@ -161,35 +161,42 @@ def etf_change(symbol, scan_date, _cache={}):
     return val
 
 
-def vix_close(scan_date):
-    """^VIX close on scan_date — same for all tickers that day, so fetch ONCE per
-    run (Nagel: liquidity-supply reversal premium is stronger when VIX is high).
-    Descriptive context, NOT a signal."""
+def vix_close(scan_date, _cache={}):
+    """^VIX close on scan_date — same for all tickers that day, fetched once per
+    date (Nagel: reversal premium ~ VIX). Cache keyed by DATE so a multi-date
+    backfill stays point-in-time. Descriptive context, NOT a signal."""
+    if scan_date in _cache:
+        return _cache[scan_date]
+    val = ""
     try:
         h = yf.Ticker("^VIX").history(start=str(scan_date - timedelta(days=10)),
                                       end=str(scan_date + timedelta(days=1)), auto_adjust=True)
         h = h[h.index.date <= scan_date]
-        return round(float(h["Close"].iloc[-1]), 2) if len(h) else ""
+        val = round(float(h["Close"].iloc[-1]), 2) if len(h) else ""
     except Exception:
-        return ""
+        pass
+    _cache[scan_date] = val
+    return val
 
 
 def etf_momentum(symbol, scan_date, _cache={}):
-    """(5d, 20d) trailing return of a sector ETF up to scan_date. Cached per run
-    (one fetch per ETF, not per ticker). Descriptive context, NOT a signal."""
-    if symbol in _cache:
-        return _cache[symbol]
+    """(5d, 20d) trailing return of a sector ETF up to scan_date. Cache keyed by
+    (symbol, DATE) — one fetch per ETF per date, and correct point-in-time when a
+    backfill spans multiple scan_dates. Descriptive context, NOT a signal."""
+    key = (symbol, scan_date)
+    if key in _cache:
+        return _cache[key]
     val = (None, None)
     try:
         h = yf.Ticker(symbol).history(start=str(scan_date - timedelta(days=60)),
                                       end=str(scan_date + timedelta(days=1)), auto_adjust=True)
         c = h[h.index.date <= scan_date]["Close"]
-        m5 = round((c.iloc[-1] / c.iloc[-6] - 1) * 100, 2) if len(c) >= 6 else None
-        m20 = round((c.iloc[-1] / c.iloc[-21] - 1) * 100, 2) if len(c) >= 21 else None
+        m5 = round(float(c.iloc[-1] / c.iloc[-6] - 1) * 100, 2) if len(c) >= 6 else None
+        m20 = round(float(c.iloc[-1] / c.iloc[-21] - 1) * 100, 2) if len(c) >= 21 else None
         val = (m5, m20)
     except Exception:
         pass
-    _cache[symbol] = val
+    _cache[key] = val
     return val
 
 
@@ -387,11 +394,120 @@ def backfill_intraday_prior_context(scan_date):
     return len(rows)
 
 
+# context fields filled by this one-time backfill (descriptive — collection only)
+CONTEXT_FIELDS = ["pct_from_52w_high", "pct_from_52w_low",
+                  "prior_decline_20d_pct", "prior_decline_60d_pct",
+                  "vix_level", "drop_day_rel_volume",
+                  "sector_momentum_5d", "sector_momentum_20d"]
+
+
+def _context_for_row(scan_d, ticker, sector):
+    """Compute all CONTEXT_FIELDS point-in-time (<= scan_d) from ONE history pull.
+    Returns a partial dict (scan_date+ticker+fields) or None if no bar on scan_d."""
+    h = yf.Ticker(ticker).history(
+        start=str(scan_d - timedelta(days=config.EOD_HISTORY_DAYS)),
+        end=str(scan_d + timedelta(days=1)), auto_adjust=True)
+    h = h[h.index.date <= scan_d]
+    prior = h[h.index.date < scan_d]
+    today = h[h.index.date == scan_d]
+    if h.empty or today.empty:
+        return None
+    cl = float(today["Close"].iloc[-1])
+    vol = float(today["Volume"].iloc[-1])
+    avg20 = float(prior["Volume"].tail(20).mean()) if len(prior) >= 5 else None
+    rel = round(vol / avg20, 2) if avg20 else ""
+    etf = config.SECTOR_ETF.get(sector)
+    m5, m20 = etf_momentum(etf, scan_d) if etf else (None, None)
+    return {"scan_date": str(scan_d), "ticker": ticker,
+            "vix_level": vix_close(scan_d), "drop_day_rel_volume": rel,
+            "sector_momentum_5d": m5, "sector_momentum_20d": m20,
+            **prior_context(h, prior, cl)}
+
+
+def backfill_missing_context(dry_run=False):
+    """ONE-TIME backfill: fill the descriptive context fields for every
+    watchlist_live row (any source / any scan_date) that is missing at least one
+    of them. point-in-time per the row's OWN scan_date (history sliced <= scan_date;
+    VIX/sector-momentum of that day). Partial merge-safe upsert by (scan_date,ticker)
+    — full rows are untouched, no field is overwritten. Returns (computed_rows,
+    n_targets). NOT wired into the daily workflow. Collection only — no decision."""
+    import sheets_manager as sm
+    wh, wd = sm.read_rows(config.SHEET_ID, config.TAB_WATCHLIST)
+    if not wd:
+        log.info("watchlist_live empty — nothing to backfill.")
+        return [], 0
+    idx = {c: i for i, c in enumerate(wh)}
+    if not all(k in idx for k in ("scan_date", "ticker")):
+        log.error("watchlist_live missing scan_date/ticker columns.")
+        return [], 0
+    have_ctx = [c for c in CONTEXT_FIELDS if c in idx]
+
+    def is_blank(r, c):
+        i = idx[c]
+        return i >= len(r) or r[i] in ("", None)
+
+    targets = []
+    for r in wd:
+        sd, tk = r[idx["scan_date"]], r[idx["ticker"]]
+        if not sd or not tk:
+            continue
+        if any(is_blank(r, c) for c in have_ctx):
+            sector = r[idx["sector"]] if "sector" in idx and idx["sector"] < len(r) else ""
+            targets.append((sd, tk, sector))
+    log.info("Context backfill: %d/%d rows missing >=1 of %d context fields.",
+             len(targets), len(wd), len(have_ctx))
+
+    out = []
+    for sd, tk, sector in targets:
+        try:
+            scan_d = datetime.strptime(sd, "%Y-%m-%d").date()
+        except ValueError:
+            log.warning("backfill skip bad date %s %s", sd, tk)
+            continue
+        try:
+            row = _context_for_row(scan_d, tk, sector)
+            if row is None:
+                log.warning("backfill %s %s: no bar on scan_date — skipped.", sd, tk)
+                continue
+            out.append(row)
+            log.info("ctx %s %s: 52wH=%s 52wL=%s d20=%s d60=%s vix=%s relvol=%s sm5=%s sm20=%s",
+                     sd, tk, row["pct_from_52w_high"], row["pct_from_52w_low"],
+                     row["prior_decline_20d_pct"], row["prior_decline_60d_pct"],
+                     row["vix_level"], row["drop_day_rel_volume"],
+                     row["sector_momentum_5d"], row["sector_momentum_20d"])
+        except Exception as e:
+            log.warning("backfill %s %s failed: %s", sd, tk, e)
+        time.sleep(config.RATE_LIMIT_SLEEP)
+
+    if out and not dry_run:
+        upd, ins, tot = sm.upsert_by_key(config.SHEET_ID, config.TAB_WATCHLIST, HEADER,
+                                         out, ["scan_date", "ticker"])
+        log.info("Context backfill written: %d rows updated (tab total %d).", upd, tot)
+    return out, len(targets)
+
+
 def main():
     ap = argparse.ArgumentParser()
     ap.add_argument("--date", type=lambda s: datetime.strptime(s, "%Y-%m-%d").date(), default=None)
     ap.add_argument("--dry-run", action="store_true")
+    ap.add_argument("--backfill-context", action="store_true",
+                    help="ONE-TIME: fill descriptive context fields for existing "
+                         "watchlist rows missing them (point-in-time). No scan.")
     args = ap.parse_args()
+
+    # one-time context backfill path (does NOT scan; not in the daily workflow)
+    if args.backfill_context:
+        if not config.SHEET_ID:
+            log.error("No SHEET_ID configured — cannot backfill context.")
+            return []
+        out, ntargets = backfill_missing_context(dry_run=args.dry_run)
+        mode = "DRY RUN" if args.dry_run else "WROTE"
+        print(f"\n--- BACKFILL CONTEXT ({mode}): {ntargets} rows missing context; "
+              f"computed {len(out)} ---")
+        if out:
+            import json
+            print(json.dumps(out[0], indent=2, default=str, ensure_ascii=False))
+        return out
 
     scan_date = last_trading_day(args.date or date.today())
     log.info("Scan date: %s", scan_date)

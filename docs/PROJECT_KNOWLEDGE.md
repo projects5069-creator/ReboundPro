@@ -52,6 +52,7 @@ Streamlit Cloud, נפרס מ-`dashboard.py` (branch `main`). Cloud מתקין מ
   - (M3.6) *prior-decline context* ב-watchlist (`pct_from_52w_high/pct_from_52w_low/prior_decline_20d_pct/prior_decline_60d_pct`) — `scanner.prior_context` מחלון `EOD_HISTORY_DAYS=400` (אותה קריאה).
   - (M3.7) *סממני-הקשר מבוססי-מחקר*: `vix_level` (^VIX close, Nagel; פעם-לריצה `sc.vix_close`), `drop_day_rel_volume` (volume/avg_20, capitulation; == volume_ratio ב-EOD), `sector_momentum_5d/20d` (תשואת sector-ETF; `sc.etf_momentum` cache פר-ריצה, פר-ETF לא פר-מניה).
   - **כיסוי:** prior-decline מתמלא גם לשורות source=intraday דרך `scanner.backfill_intraday_prior_context` (ריצת-EOD, אותו scan_date). 3 סממני-M3.7 עדיין ריקים ל-intraday-live (נאספים ב-scanner+gradual; להרחבה עתידית).
+  - (M3.8.1) **backfill חד-פעמי:** `python scanner.py --backfill-context` ממלא את 8 שדות-ההקשר לשורות watchlist ישנות שחסר להן (point-in-time לפי scan_date של כל שורה; upsert חלקי merge-safe; לא ב-workflow היומי). תיקון נלווה: cache של `vix_close`/`etf_momentum` לפי (symbol,scan_date) — נכון לבקפיל רב-תאריכי.
   - (M3.8) **split/halt detector** (הגנת-תקפות M4): `split_halt_flag`/`split_halt_reason` ב-post_analysis — מסמן reverse-split/halt artifacts (קפיצת-split = "recovery" מזויף של מאות %). מקור-אמת = yf split-feed (עמודת `Stock Splits` ב-history, אפס קריאה) + גיבוי jump>`SPLIT_HALT_JUMP_PCT=100` + halt_gap. **flag לא-הרסני — הנתון הגולמי נשמר; M4 מחריג שורות מסומנות ומדווח contamination%** (MASTERPLAN §5).
 - חלון תוצאות: D1..D+20 (+ תת-חלונות 3/5/10/20).
 - עלות-סטרס M4: 0.50% round-trip.
