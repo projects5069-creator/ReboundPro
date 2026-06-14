@@ -31,7 +31,8 @@ HEADER = [
     f"touched_up_{int(config.TOUCH_UP_PCT)}pct", "day_touched_up",
     f"touched_down_{int(config.TOUCH_DOWN_PCT)}pct", "day_touched_down",
     "last_close_pct", "dN_date", "collected_at",
-]
+] + [f"max_recovery_{w}d" for w in config.POST_ANALYSIS_SUBWINDOWS] \
+  + [f"max_further_drop_{w}d" for w in config.POST_ANALYSIS_SUBWINDOWS]
 
 
 def expected_forward_sessions(scan_date, horizon):
@@ -100,6 +101,13 @@ def compute_outcome(ticker, scan_date, ref_close=None, horizon=None):
     day_up = (int(list(highs.values).index(up_hits.iloc[0]) ) + 1) if touched_up else ""
     day_dn = (int(list(lows.values).index(dn_hits.iloc[0])) + 1) if touched_dn else ""
 
+    # sub-window metrics (D+3/D+5/D+10/D+20) — enables later window analysis
+    sub = {}
+    for w in config.POST_ANALYSIS_SUBWINDOWS:
+        hw, lw = highs.iloc[:w], lows.iloc[:w]
+        sub[f"max_recovery_{w}d"] = round(float(hw.max()), 2) if len(hw) else ""
+        sub[f"max_further_drop_{w}d"] = round(float(lw.min()), 2) if len(lw) else ""
+
     return {**base, "ref_close": round(ref_close, 2), "status": status,
             "forward_days_available": navail,
             "max_recovery_pct": round(max_rec, 2), "day_of_max_recovery": day_rec,
@@ -107,7 +115,7 @@ def compute_outcome(ticker, scan_date, ref_close=None, horizon=None):
             HEADER[10]: touched_up, "day_touched_up": day_up,
             HEADER[12]: touched_dn, "day_touched_down": day_dn,
             "last_close_pct": round(float(closes.iloc[-1]), 2),
-            "dN_date": str(fwd.index[-1].date())}
+            "dN_date": str(fwd.index[-1].date()), **sub}
 
 
 def to_matrix(rows):

@@ -1,0 +1,44 @@
+name: ReboundPro Intraday Scanner
+
+# Intraday cadence ~10 min during US market hours.
+# ⚠️ GitHub's native cron is UNRELIABLE below ~1h (runs queue, skip, and drift
+# by many minutes under load). The proven RidingHigh mechanism is an external
+# pinger (cron-job.org) that calls workflow_dispatch on a strict 10-min schedule.
+# This file therefore exposes BOTH:
+#   - schedule: */10 (best-effort baseline if the pinger is down)
+#   - workflow_dispatch: the reliable trigger driven by cron-job.org
+# US market 09:30–16:00 ET = 13:30–20:00 UTC (EDT) / 14:30–21:00 UTC (EST);
+# 13–21 UTC window covers both DST regimes.
+on:
+  schedule:
+    - cron: "*/10 13-21 * * 1-5"
+  workflow_dispatch: {}
+
+concurrency:
+  group: reboundpro-intraday
+  cancel-in-progress: true        # a late run is stale; let the next one win
+
+jobs:
+  intraday:
+    runs-on: ubuntu-latest
+    timeout-minutes: 12
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+      - name: Install dependencies
+        run: |
+          python -m pip install --upgrade pip
+          pip install finvizfinance yfinance gspread google-auth pandas numpy pytz exchange_calendars
+      - name: Restore service-account credentials
+        env:
+          GOOGLE_CREDENTIALS_JSON: ${{ secrets.GOOGLE_CREDENTIALS_JSON }}
+        run: printf '%s' "$GOOGLE_CREDENTIALS_JSON" > google_credentials.json
+      - name: Intraday scan (maintain watchlist_live intraday path)
+        env:
+          REBOUND_SHEET_ID: ${{ secrets.REBOUND_SHEET_ID }}
+        run: python intraday_scanner.py
+      - name: Remove credentials
+        if: always()
+        run: rm -f google_credentials.json

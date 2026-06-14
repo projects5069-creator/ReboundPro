@@ -52,6 +52,48 @@ def upsert_rows(sheet_id, tab, header, rows, date_col="scan_date"):
     return len(surviving), len(rows)
 
 
+def upsert_by_key(sheet_id, tab, header, new_dicts, key_cols):
+    """Merge rows by composite key, column-NAME-safe (migration-safe).
+
+    Existing rows are remapped from their stored header to `header` by column
+    name (so adding columns never misaligns old rows). Rows whose key matches a
+    new row are REPLACED; all other existing rows are preserved. Returns
+    (n_updated, n_inserted, n_total).
+    """
+    client = get_client()
+    ss = client.open_by_key(sheet_id)
+    ws = get_or_create_worksheet(ss, tab, cols=len(header))
+    existing = ws.get_all_values()
+
+    merged = {}          # key -> dict
+    order = []           # preserve row order
+    if existing and len(existing) > 1:
+        old_header = existing[0]
+        for r in existing[1:]:
+            d = {old_header[i]: (r[i] if i < len(r) else "") for i in range(len(old_header))}
+            k = tuple(d.get(c, "") for c in key_cols)
+            if k not in merged:
+                order.append(k)
+            merged[k] = {c: d.get(c, "") for c in header}
+
+    updated = inserted = 0
+    for nd in new_dicts:
+        k = tuple(str(nd.get(c, "")) for c in key_cols)
+        if k in merged:
+            merged[k].update({c: nd.get(c, merged[k].get(c, "")) for c in header})
+            updated += 1
+        else:
+            merged[k] = {c: nd.get(c, "") for c in header}
+            order.append(k)
+            inserted += 1
+
+    matrix = [[("" if merged[k].get(c) is None else merged[k].get(c)) for c in header]
+              for k in order]
+    ws.clear()
+    ws.update(range_name="A1", values=[header] + matrix)
+    return updated, inserted, len(order)
+
+
 def read_rows(sheet_id, tab):
     client = get_client()
     ss = client.open_by_key(sheet_id)

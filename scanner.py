@@ -31,15 +31,8 @@ log = logging.getLogger("scanner")
 logging.basicConfig(level=logging.INFO, format="%(asctime)s %(levelname)-7s %(message)s",
                     datefmt="%H:%M:%S")
 
-HEADER = [
-    "scan_date", "ticker", "exchange", "company_name", "sector", "industry", "country",
-    "detected_at", "market_cap", "market_cap_category", "liquidity_bucket",
-    "price", "open", "high", "low_so_far", "prev_close",
-    "drop_pct_from_open", "close_pct_from_open", "pct_change_prevclose",
-    "volume", "avg_volume_20d", "adv_dollar", "volume_ratio", "rsi_14",
-    "spy_change_pct", "sector_etf", "sector_etf_change_pct", "market_regime", "drop_type",
-    "scanned_at",
-]
+# shared watchlist schema (M1 EOD + M2 intraday columns) — single source in config
+HEADER = config.WATCHLIST_HEADER
 
 
 # ── helpers ──────────────────────────────────────────────────────────────────
@@ -228,6 +221,7 @@ def build_snapshot(row, scan_date, spy_chg, now_et):
         "sector_etf_change_pct": sec_chg, "market_regime": market_regime(spy_chg),
         "drop_type": classify_drop_type(spy_chg, sec_chg),
         "scanned_at": now_et.strftime("%Y-%m-%d %H:%M:%S %Z"),
+        "source": "eod_close",
     }
     return snap, "ok"
 
@@ -278,8 +272,18 @@ def main():
         return rows
 
     import sheets_manager as sm
-    surv, new = sm.upsert_rows(config.SHEET_ID, config.TAB_WATCHLIST, HEADER, to_matrix(rows))
-    log.info("Wrote watchlist_live: %d new rows (kept %d historical).", new, surv)
+    # intraday rows take precedence — don't overwrite a (date,ticker) already
+    # captured live intraday with a coarser EOD-close row.
+    eh, ed = sm.read_rows(config.SHEET_ID, config.TAB_WATCHLIST)
+    intraday_keys = set()
+    if ed and "source" in eh:
+        si, di, ti = eh.index("source"), eh.index("scan_date"), eh.index("ticker")
+        intraday_keys = {(r[di], r[ti]) for r in ed if len(r) > si and r[si] == "intraday"}
+    rows_to_write = [r for r in rows if (r["scan_date"], r["ticker"]) not in intraday_keys]
+    upd, ins, tot = sm.upsert_by_key(config.SHEET_ID, config.TAB_WATCHLIST, HEADER,
+                                     rows_to_write, ["scan_date", "ticker"])
+    log.info("watchlist_live: +%d new, %d updated (intraday-owned skipped: %d, tab total %d).",
+             ins, upd, len(rows) - len(rows_to_write), tot)
 
     # point-in-time fundamentals snapshot for the same candidates (collection only)
     if rows:

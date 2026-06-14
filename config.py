@@ -35,9 +35,16 @@ MIN_ADV_DOLLAR = 5_000_000           # 20-day avg $ volume
 MIN_MARKET_CAP = 300_000_000         # above "Micro" (Micro = 50M–300M); Small+ only
 
 # ── Post-analysis ────────────────────────────────────────────────────────────
-POST_ANALYSIS_HORIZON = 5            # collect D1..D+N
+POST_ANALYSIS_HORIZON = 20           # collect D1..D+N (multi-day recovery window)
+POST_ANALYSIS_SUBWINDOWS = [3, 5, 10, 20]   # sub-window metrics for later analysis
 TOUCH_UP_PCT = 5.0                   # "did it touch +X% from scan close"
 TOUCH_DOWN_PCT = 8.0                 # "did it touch -Y% from scan close"
+
+# ── Intraday scan (M2) ───────────────────────────────────────────────────────
+INTRADAY_SCAN_INTERVAL_MIN = 10      # cadence (workflow + cron-job.org pinger)
+INTRADAY_DROP_THRESHOLD = 10.0       # % below the day's OPEN (current price)
+REVERSAL_CONFIRM_PCT = 2.0           # path flag: price >= this % above intraday low
+                                     #   (descriptive path fact — NOT a trade signal)
 
 # ── Fundamentals snapshot (Finviz quote ticker_fundament) ────────────────────
 # Frozen field list (the 90 Finviz fields minus the junk 'Trades'). Captured
@@ -105,6 +112,31 @@ TAB_FUNDAMENTALS = "fundamentals_snapshot"
 SHEET_ID = os.environ.get("REBOUND_SHEET_ID", "")
 TAB_WATCHLIST = "watchlist_live"
 TAB_POST = "post_analysis"
+
+# Shared watchlist schema (M1 EOD fields + M2 intraday-path fields). Both the
+# EOD scanner and the intraday scanner write this same header so the tab stays
+# column-aligned. Intraday fields are blank for EOD-sourced rows and vice versa.
+WATCHLIST_HEADER = [
+    # identity / regime (M1)
+    "scan_date", "ticker", "exchange", "company_name", "sector", "industry",
+    "country", "detected_at", "market_cap", "market_cap_category",
+    "liquidity_bucket", "price", "open", "high", "low_so_far", "prev_close",
+    "drop_pct_from_open", "close_pct_from_open", "pct_change_prevclose",
+    "volume", "avg_volume_20d", "adv_dollar", "volume_ratio", "rsi_14",
+    "spy_change_pct", "sector_etf", "sector_etf_change_pct", "market_regime",
+    "drop_type", "scanned_at",
+    # provenance + intraday path (M2)
+    "source",                    # "eod_close" | "intraday"
+    "first_cross_at",            # timestamp of first ≥threshold cross (intraday)
+    "first_cross_price",
+    "first_cross_drop_pct",
+    "intraday_low",              # lowest price seen during the day
+    "intraday_low_at",
+    "recovery_from_low_pct",     # (last - intraday_low)/intraday_low * 100
+    "reversal_confirmed",        # path flag (>= REVERSAL_CONFIRM_PCT off low)
+    "scans_count",               # how many intraday scans touched this row
+    "last_update_at",
+]
 CREDS_PATH = os.path.join(os.path.dirname(__file__), "google_credentials.json")
 
 # ── Regime (market/sector context) ───────────────────────────────────────────
