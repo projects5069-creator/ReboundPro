@@ -251,6 +251,32 @@ def to_matrix(rows):
     return [[("" if r.get(c) is None else r.get(c)) for c in HEADER] for r in rows]
 
 
+SUMMARY_HEADER = [
+    "scan_date", "total_finviz_candidates", "passed_floor",
+    "below_min_price", "below_min_cap", "below_min_adv", "drop_below_threshold",
+    "other_rejects", "scanned_at",
+]
+
+
+def build_summary(scan_date, reasons):
+    """One daily collection-health row from the reject-reason counter."""
+    known = {"ok", "below_min_price", "below_min_cap", "below_min_adv",
+             "drop_below_threshold"}
+    total = sum(reasons.values())
+    other = sum(v for k, v in reasons.items() if k not in known)
+    return {
+        "scan_date": str(scan_date),
+        "total_finviz_candidates": total,
+        "passed_floor": reasons.get("ok", 0),
+        "below_min_price": reasons.get("below_min_price", 0),
+        "below_min_cap": reasons.get("below_min_cap", 0),
+        "below_min_adv": reasons.get("below_min_adv", 0),
+        "drop_below_threshold": reasons.get("drop_below_threshold", 0),
+        "other_rejects": other,
+        "scanned_at": datetime.now(ET).strftime("%Y-%m-%d %H:%M:%S %Z"),
+    }
+
+
 def main():
     ap = argparse.ArgumentParser()
     ap.add_argument("--date", type=lambda s: datetime.strptime(s, "%Y-%m-%d").date(), default=None)
@@ -284,6 +310,14 @@ def main():
                                      rows_to_write, ["scan_date", "ticker"])
     log.info("watchlist_live: +%d new, %d updated (intraday-owned skipped: %d, tab total %d).",
              ins, upd, len(rows) - len(rows_to_write), tot)
+
+    # daily collection-health row (persist reject breakdown beyond logs)
+    try:
+        sm.upsert_by_key(config.SHEET_ID, config.TAB_SUMMARY, SUMMARY_HEADER,
+                         [build_summary(scan_date, reasons)], ["scan_date"])
+        log.info("daily_summary row written for %s.", scan_date)
+    except Exception as e:
+        log.error("daily_summary write failed: %s", e)
 
     # point-in-time fundamentals snapshot for the same candidates (collection only)
     if rows:

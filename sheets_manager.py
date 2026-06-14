@@ -4,6 +4,9 @@ Service-account auth (creds file at google_credentials.json). The SA cannot
 *create* sheets (Drive quota); the target sheet must be created by the user and
 shared with the SA as Editor. Pattern mirrors DropsLab/gsheets_sync.
 """
+import json
+import os
+
 import gspread
 from google.oauth2.service_account import Credentials
 
@@ -15,14 +18,36 @@ SCOPES = [
 ]
 
 
+def _load_credentials():
+    """Creds priority: local file (dev) -> Streamlit secrets (cloud) -> env JSON.
+    Mirrors DropsLab/gsheets_sync so the same code runs locally and on the cloud.
+    """
+    # 1. local service-account file (local dev / GitHub Actions writes it)
+    if os.path.exists(config.CREDS_PATH):
+        return Credentials.from_service_account_file(config.CREDS_PATH, scopes=SCOPES)
+    # 2. Streamlit Cloud secrets
+    try:
+        import streamlit as st
+        if hasattr(st, "secrets") and "gcp_service_account" in st.secrets:
+            return Credentials.from_service_account_info(
+                dict(st.secrets["gcp_service_account"]), scopes=SCOPES)
+    except Exception:
+        pass
+    # 3. env var with raw JSON
+    raw = os.environ.get("GOOGLE_CREDENTIALS_JSON", "").strip()
+    if raw:
+        return Credentials.from_service_account_info(json.loads(raw), scopes=SCOPES)
+    raise EnvironmentError(
+        "No Google credentials: provide google_credentials.json, "
+        "st.secrets['gcp_service_account'], or GOOGLE_CREDENTIALS_JSON.")
+
+
 def get_client():
-    creds = Credentials.from_service_account_file(config.CREDS_PATH, scopes=SCOPES)
-    return gspread.authorize(creds)
+    return gspread.authorize(_load_credentials())
 
 
 def service_account_email():
-    creds = Credentials.from_service_account_file(config.CREDS_PATH, scopes=SCOPES)
-    return creds.service_account_email
+    return _load_credentials().service_account_email
 
 
 def get_or_create_worksheet(ss, title, rows=2000, cols=40):

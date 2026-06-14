@@ -34,11 +34,26 @@ NUM_WATCH = ["drop_pct_from_open", "close_pct_from_open", "pct_change_prevclose"
              "spy_change_pct", "sector_etf_change_pct", "market_cap"]
 NUM_POST = ["ref_close", "max_recovery_pct", "max_further_drop_pct",
             "last_close_pct", "forward_days_available", "horizon"]
+NUM_SUMMARY = ["total_finviz_candidates", "passed_floor", "below_min_price",
+               "below_min_cap", "below_min_adv", "drop_below_threshold", "other_rejects"]
+
+
+def _resolve_sheet_id():
+    """Local/CI uses env (config.SHEET_ID); Streamlit Cloud uses st.secrets."""
+    if config.SHEET_ID:
+        return config.SHEET_ID
+    try:
+        return st.secrets.get("REBOUND_SHEET_ID", "")
+    except Exception:
+        return ""
+
+
+SHEET_ID = _resolve_sheet_id()
 
 
 @st.cache_data(ttl=300)
 def load(tab, num_cols):
-    header, rows = sm.read_rows(config.SHEET_ID, tab)
+    header, rows = sm.read_rows(SHEET_ID, tab)
     if not header:
         return pd.DataFrame()
     df = pd.DataFrame(rows, columns=header)
@@ -57,8 +72,8 @@ st.title("📉 ReboundPro — Monitoring")
 st.caption("תצוגה בלבד · אין ניקוד / אותות / דירוג / המלצות (אלה M5, ממתינים להכרעת M4). "
            "View-only: raw collected data + pipeline health.")
 
-if not config.SHEET_ID:
-    st.error("REBOUND_SHEET_ID לא מוגדר (.env / env). אין מקור נתונים.")
+if not SHEET_ID:
+    st.error("REBOUND_SHEET_ID לא מוגדר (.env / env / st.secrets). אין מקור נתונים.")
     st.stop()
 
 with st.sidebar:
@@ -67,7 +82,7 @@ with st.sidebar:
         st.cache_data.clear()
         st.rerun()
     st.caption("נתונים נקראים מ-Google Sheet (cache 5 דק').")
-    st.caption(f"Sheet: …{config.SHEET_ID[-8:]}")
+    st.caption(f"Sheet: …{SHEET_ID[-8:]}")
     try:
         st.caption(f"SA: {sm.service_account_email()}")
     except Exception:
@@ -118,9 +133,21 @@ with tab_health:
     else:
         st.info("post_analysis עדיין ריק.")
 
-    st.info("ℹ️ פילוח סיבות-דחייה (below_min_price/cap/adv) נרשם בלוג הסורק אך **אינו נשמר** "
-            "ל-Sheet כרגע. כדי להציגו כאן צריך tab `daily_summary` (שיפור איסוף קטן, מחוץ ל-scope "
-            "של dashboard-בלבד).")
+    st.markdown("**פילוח סיבות-דחייה (EOD scanner) — `daily_summary`**")
+    summ = load(config.TAB_SUMMARY, NUM_SUMMARY)
+    if summ.empty:
+        st.info("daily_summary עדיין ריק — יתמלא בריצת ה-EOD הבאה.")
+    else:
+        summ = summ.sort_values("scan_date")
+        reject_cols = ["below_min_price", "below_min_cap", "below_min_adv", "drop_below_threshold"]
+        melt = summ.melt(id_vars="scan_date", value_vars=reject_cols,
+                         var_name="reason", value_name="count")
+        st.plotly_chart(px.bar(melt, x="scan_date", y="count", color="reason",
+                               title="דחיות לפי יום (stacked)"), width="stretch")
+        show = ["scan_date", "total_finviz_candidates", "passed_floor"] + reject_cols + ["other_rejects"]
+        show = [c for c in show if c in summ.columns]
+        st.dataframe(summ[show].sort_values("scan_date", ascending=False),
+                     width="stretch", hide_index=True)
 
 # ── 2. WATCHLIST ─────────────────────────────────────────────────────────────
 with tab_watch:

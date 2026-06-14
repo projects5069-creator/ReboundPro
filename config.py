@@ -120,6 +120,7 @@ FINNHUB_RATE_SLEEP = 1.1            # seconds between tickers (free tier 60/min)
 SHEET_ID = os.environ.get("REBOUND_SHEET_ID", "")
 TAB_WATCHLIST = "watchlist_live"
 TAB_POST = "post_analysis"
+TAB_SUMMARY = "daily_summary"
 
 # Shared watchlist schema (M1 EOD fields + M2 intraday-path fields). Both the
 # EOD scanner and the intraday scanner write this same header so the tab stays

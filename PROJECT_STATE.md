@@ -1,28 +1,33 @@
 # ReboundPro — PROJECT STATE
 
-**עודכן:** 2026-06-13 · **שלב:** Skeleton (טרם Phase 0)
+**עודכן:** 2026-06-14 · **שלב:** אגף איסוף/תצוגה **חי** (M1–M4 collect); מנוע ההחלטה ממתין
 
-## איפה אנחנו
-- ✅ מסמך-אב: `~/Downloads/ReboundPro_MasterPlan_2026-06-13_v0.1.md`
-- ✅ build spec מאושר: `docs/ReboundPro_BuildSpec_v0.1.md`
-- ✅ שלד repo נוצר (עץ תיקיות + stubs + docs). אין קוד לוגי. לא בוצע commit/push.
-- ⬜ Phase 0 — harness לבדיקת יתרון (הצעד הבא)
-- ⬜ Phase 0.5 — מסנן קטליסט
-- ⬜ Phase 1 — בנייה מלאה (מותנה ביתרון)
+## מה חי עכשיו
+- ✅ **Repo:** `projects5069-creator/ReboundPro` (פרטי). Sheet: `ReboundPro-Data` (משותף עם ה-SA `ridinghigh-sheets-v2@...`).
+- ✅ **EOD scanner** (`scanner.py`) — Finviz→רצפת-נזילות קשיחה→snapshot point-in-time + regime → `watchlist_live`; כותב גם `daily_summary` (בריאות-איסוף) + `fundamentals_snapshot` inline.
+- ✅ **Intraday scanner** (`intraday_scanner.py`) — כל ~10 דק' בשעות-שוק (guard `is_market_hours`), מסלול תוך-יומי (first-cross/intraday-low/recovery/reversal) עם dedup merge-by-key.
+- ✅ **Fundamentals** (`fundamentals.py`) — Finviz quote (~89 שדות) → `fundamentals_snapshot`, raw+`_num`, רמות primary/peripheral (config).
+- ✅ **News/catalyst** (`catalyst.py`) — Finnhub company-news (D-3..D) + earnings-flag → `news_snapshot`; EOD, raw בלבד.
+- ✅ **post_analysis** (`post_analysis_collector.py`) — D1..D+20 + תת-חלונות D+3/5/10/20; halt/delist/pending מפורש.
+- ✅ **Dashboard** (`dashboard.py`, Streamlit) — תצוגה בלבד: Collection Health (כולל `daily_summary`), Watchlist, Post-Analysis, Descriptive Stats. תומך local + Streamlit Cloud (`st.secrets`).
+- ✅ **תזמון:** `daily.yml` (EOD 22:30 UTC: scanner→catalyst→post_analysis) · `intraday.yml` (cron */10 + workflow_dispatch ל-cron-job.org).
+- ✅ **Secrets (GitHub Actions):** GOOGLE_CREDENTIALS_JSON · APCA_API_KEY_ID · APCA_API_SECRET_KEY · REBOUND_SHEET_ID · FINNHUB_API_KEY.
 
-## החלטות שאושרו (2026-06-13)
-- שם: ReboundPro · יקום: NASDAQ+NYSE · סף: 10% (grid 7/10/15)
-- ספק: Polygon (intraday) + FMP (fundamentals/news); yfinance/EODHD fallback היסטורי
-- חלון החזקה: נגזר מ-Phase 0
+## טאבים ב-Sheet
+`watchlist_live` · `daily_summary` · `fundamentals_snapshot` · `news_snapshot` · `post_analysis`.
 
-## תלויות פתוחות לפני Phase 0
-- ⬜ מפתח Polygon API
-- ⬜ מפתח FMP API
-- ⬜ הרשאת קריאה ל-Sheet של DropsLab (`1M-ofmSmUHAb7o8J_pZFKYHh4N1aZVOXVWngFzTYxjZQ`)
-- ⬜ Google service-account credentials (לאחסון ReboundPro)
+## ממתין (M5 — לא לבנות עד הכרעת M4)
+- ⬜ Phase 0 / harness לבדיקת יתרון נטו (ראה ביקורת ב-`docs/`); הכרעת go/no-go.
+- ⬜ סיווג קטליסט (LLM) מהכותרות השמורות ב-`news_snapshot`.
+- ⬜ מנוע ניקוד/החלטה/אותות — **חסום** עד M5.
+- ⬜ פעלת cron-job.org בפועל (pinger ל-`intraday.yml`).
 
-## לקחים שמיובאים מ-RidingHigh / DropsLab
-- מדד חסר קורלציה לא נכנס לניקוד (Score r≈-0.07).
-- יישור עמודות ב-Sheets — מקור באגים; data_integrity agent.
-- כל הזמנים Peru UTC-5, ללא DST.
+## החלטות שאושרו
+- שם ReboundPro · יקום NASDAQ+NYSE · סף 10% מהפתיחה · ספק חינמי (Finviz+yfinance+Finnhub); Polygon minute-bars = שדרוג דיוק עתידי.
+- timezone: שעון-שוק לפי ET (DST) דרך לוח NYSE; cron ב-UTC.
+
+## לקחים מיובאים
+- מדד חסר קורלציה לא נכנס לניקוד (RidingHigh: Score r≈-0.07).
+- יישור עמודות ב-Sheets — מקור באגים; משתמשים ב-`upsert_by_key` (merge לפי שם-עמודה, migration-safe).
 - survivorship: לספור halts/delistings כתוצאה, לא להשמיט.
+- סודות לעולם לא מודפסים; `.env`+`google_credentials.json` gitignored.
