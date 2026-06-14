@@ -10,6 +10,11 @@ stats. Style mirrors RidingHigh Pro's Streamlit dashboard.
 
 Run locally:  streamlit run dashboard.py
 """
+# Streamlit Cloud redeploy marker — 2026-06-14: force a clean app reboot so the
+# running process re-imports config.py (Cloud was serving a stale cached `config`
+# module from before TAB_TIMESERIES was added in e30c1ca → AttributeError). The
+# repo code is correct; this only triggers a fresh deploy. If the error persists,
+# Reboot the app in Streamlit Cloud (Manage app → Reboot) to clear cached bytecode.
 import pandas as pd
 import plotly.express as px
 import streamlit as st
