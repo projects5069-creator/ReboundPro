@@ -39,6 +39,12 @@ POST_ANALYSIS_HORIZON = 20           # collect D1..D+N (multi-day recovery windo
 POST_ANALYSIS_SUBWINDOWS = [3, 5, 10, 20]   # sub-window metrics for later analysis
 TOUCH_UP_PCT = 5.0                   # "did it touch +X% from scan close"
 TOUCH_DOWN_PCT = 8.0                 # "did it touch -Y% from scan close"
+# split/halt contamination detector — inter-day jump above this % in the forward
+# window is treated as a reverse-split/data artifact (backup heuristic; the yf
+# split feed is the primary source-of-truth). 100% aligns with what the sister
+# system RidingHigh Pro found (TASK-180). Liquidity floor excludes microcaps, so
+# a genuine >100% single-day move is almost always an artifact, not a real bounce.
+SPLIT_HALT_JUMP_PCT = 100.0
 
 # ── Intraday scan (M2) ───────────────────────────────────────────────────────
 INTRADAY_SCAN_INTERVAL_MIN = 10      # cadence (workflow + cron-job.org pinger)

@@ -146,6 +146,12 @@ def styled(df):
     return df.style.format(fmt, na_rep="")
 
 
+def _highlight_contaminated(row):
+    """Row-level red highlight for split/halt-flagged post_analysis rows."""
+    flagged = str(row.get("split_halt_flag", "")).strip().lower() in ("true", "1")
+    return ["background-color: #5a1a1a" if flagged else "" for _ in row]
+
+
 def coalesce_kind(watch):
     """Legacy rows (pre-gradual_drop) have no/blank drop_kind -> intraday_drop,
     so they never disappear from a hypothesis page."""
@@ -202,6 +208,14 @@ def _health(watch, post, sheet_id, days):
         kpi(sc[1], "pending (טרם הבשיל)", int((post["status"] == "pending_forward").sum()))
         kpi(sc[2], "partial / גאפ", int(post["status"].str.startswith("partial").sum()))
         kpi(sc[3], "halt / delisted", int((post["status"] == "delisted_or_halted").sum()))
+        # contamination monitor — flagged split/halt rows (excluded from M4 aggregates)
+        if "split_halt_flag" in post.columns and len(post):
+            flagged = int(post["split_halt_flag"].astype(str).str.lower().isin(["true", "1"]).sum())
+            pct = round(flagged / len(post) * 100, 1)
+            cc = st.columns(4)
+            cc[0].metric("🧪 שורות מזוהמות (split/halt)", f"{flagged} ({pct}%)")
+            if flagged:
+                cc[1].caption("⚠️ שורות מסומנות מוחרגות מאגרגטי M4 — ה-recovery שלהן ארטיפקט.")
     else:
         st.info("post_analysis עדיין ריק להשערה זו.")
 
@@ -340,7 +354,12 @@ def _stock_card(watch, post, ts, fund, news):
         if pvc.empty:
             st.info("אין עדיין post_analysis למניה/תאריך שנבחרו.")
         else:
-            pcols = ["scan_date", "ticker", "status", "forward_days_available",
+            r0p = pvc.iloc[0]
+            if str(r0p.get("split_halt_flag", "")).strip().lower() in ("true", "1"):
+                st.warning(f"⚠️ **מזוהם (split/halt): {r0p.get('split_halt_reason', '')}** — "
+                           "ה-recovery למטה הוא ארטיפקט, אל תסמוך עליו (יוחרג ב-M4).")
+            pcols = ["scan_date", "ticker", "status", "split_halt_flag", "split_halt_reason",
+                     "forward_days_available",
                      "ref_close", "max_recovery_pct", "day_of_max_recovery",
                      "max_further_drop_pct", "day_of_max_drop",
                      "trough_price", "trough_day", "recovery_from_trough_pct",
@@ -411,7 +430,8 @@ def _post(post):
     pv = post[post["status"].isin(sel_st)] if sel_st else post
     up_col = next((c for c in post.columns if c.startswith("touched_up_")), None)
     dn_col = next((c for c in post.columns if c.startswith("touched_down_")), None)
-    cols = ["scan_date", "ticker", "status", "forward_days_available", "ref_close",
+    cols = ["scan_date", "ticker", "status", "split_halt_flag", "split_halt_reason",
+            "forward_days_available", "ref_close",
             "max_recovery_pct", "day_of_max_recovery", "max_further_drop_pct",
             "day_of_max_drop",
             # recovery-from-trough group (descriptive reversal record)
@@ -419,13 +439,28 @@ def _post(post):
             "max_recovery_from_trough_pct",
             up_col, dn_col, "last_close_pct", "dN_date"]
     cols = [c for c in cols if c and c in pv.columns]
+    # contamination monitor
+    if "split_halt_flag" in pv.columns and len(pv):
+        nflag = int(pv["split_halt_flag"].astype(str).str.lower().isin(["true", "1"]).sum())
+        if nflag:
+            st.warning(f"⚠️ {nflag}/{len(pv)} שורות מסומנות split/halt — ה-recovery שלהן ארטיפקט "
+                       "(מודגשות באדום). יוחרגו מאגרגטי M4; הנתון הגולמי נשמר.")
     st.caption(f"{len(pv)} שורות · halt/delist מוצג מפורשות כסטטוס (לא מושמט)")
-    st.dataframe(styled(pv[cols]), width="stretch", hide_index=True, height=460)
+    styler = styled(pv[cols])
+    if "split_halt_flag" in cols:
+        styler = styler.apply(_highlight_contaminated, axis=1)
+    st.dataframe(styler, width="stretch", hide_index=True, height=460)
 
+    # max_recovery distribution — exclude contaminated rows so the artifact spikes
+    # don't distort the descriptive view (raw rows are still kept in the table above).
     matured = post[post["status"].isin(["ok"]) | post["status"].str.startswith("partial")]
-    if not matured.empty and matured["max_recovery_pct"].notna().any():
-        st.markdown("**התפלגות max_recovery_pct (שורות שהבשילו) — תיאורי בלבד**")
-        st.plotly_chart(px.histogram(matured, x="max_recovery_pct", nbins=30), width="stretch")
+    if "split_halt_flag" in matured.columns:
+        clean = matured[~matured["split_halt_flag"].astype(str).str.lower().isin(["true", "1"])]
+    else:
+        clean = matured
+    if not clean.empty and clean["max_recovery_pct"].notna().any():
+        st.markdown("**התפלגות max_recovery_pct (שורות נקיות שהבשילו) — תיאורי בלבד**")
+        st.plotly_chart(px.histogram(clean, x="max_recovery_pct", nbins=30), width="stretch")
 
 
 def _stats(watch, drop_kind):

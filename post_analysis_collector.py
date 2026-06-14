@@ -38,7 +38,33 @@ HEADER = [
     "trough_day",                      # D+n of the trough (== day_of_max_drop)
     "recovery_from_trough_pct",        # (last_close - trough)/trough * 100
     "max_recovery_from_trough_pct",    # peak high since the trough vs trough (>=0)
+  ] + [  # split/halt contamination detector (NON-DESTRUCTIVE flag for M4 exclusion)
+    "split_halt_flag",                 # True if the forward window is contaminated
+    "split_halt_reason",               # reverse_split_ratio | inter_day_jump | halt_gap | clean
   ]
+
+
+def detect_split_halt(fwd, ref_close, status):
+    """Flag reverse-split / halt artifacts that would poison the forward outcome
+    (a reverse split fakes a multi-hundred-% "recovery"). NON-DESTRUCTIVE: returns
+    (flag, reason) only — the caller never drops or mutates the raw row; M4 simply
+    EXCLUDES flagged rows from aggregates. Sources, in priority:
+      1. yf split feed (the "Stock Splits" column in the history) — source of truth.
+      2. extreme inter-day jump > SPLIT_HALT_JUMP_PCT (backup; catches missed/ glitched splits).
+      3. halt / trading gap (fewer forward bars than elapsed sessions, or delisted).
+    """
+    if "Stock Splits" in fwd.columns and (fwd["Stock Splits"].fillna(0) != 0).any():
+        return True, "reverse_split_ratio"
+    closes = fwd["Close"].astype(float)
+    jumps = []
+    if ref_close and ref_close > 0:
+        jumps.append(abs(closes.iloc[0] / ref_close - 1) * 100)
+    jumps += [float(x) for x in closes.pct_change().abs().mul(100).dropna().values]
+    if jumps and max(jumps) > config.SPLIT_HALT_JUMP_PCT:
+        return True, "inter_day_jump"
+    if status in ("partial_gap_possible_halt", "delisted_or_halted"):
+        return True, "halt_gap"
+    return False, "clean"
 
 
 def expected_forward_sessions(scan_date, horizon):
@@ -77,12 +103,15 @@ def compute_outcome(ticker, scan_date, ref_close=None, horizon=None):
     # explicit halt / delisting / pending handling — never drop
     if navail == 0:
         status = "pending_forward" if exp == 0 else "delisted_or_halted"
+        halted = status == "delisted_or_halted"
         return {**base, "ref_close": round(ref_close, 2) if ref_close else "",
                 "status": status, "forward_days_available": 0,
                 "max_recovery_pct": "", "day_of_max_recovery": "",
                 "max_further_drop_pct": "", "day_of_max_drop": "",
                 HEADER[10]: "", "day_touched_up": "", HEADER[12]: "", "day_touched_down": "",
-                "last_close_pct": "", "dN_date": ""}
+                "last_close_pct": "", "dN_date": "",
+                "split_halt_flag": halted,
+                "split_halt_reason": "halt_gap" if halted else "clean"}
     if ref_close is None or ref_close <= 0:
         return {**base, "ref_close": "", "status": "no_ref_close",
                 "forward_days_available": navail}
@@ -131,6 +160,10 @@ def compute_outcome(ticker, scan_date, ref_close=None, horizon=None):
               "recovery_from_trough_pct": rec_from_trough,
               "max_recovery_from_trough_pct": max_rec_from_trough}
 
+    # split/halt contamination flag (non-destructive — raw values above are kept)
+    sh_flag, sh_reason = detect_split_halt(fwd, ref_close, status)
+    shd = {"split_halt_flag": sh_flag, "split_halt_reason": sh_reason}
+
     return {**base, "ref_close": round(ref_close, 2), "status": status,
             "forward_days_available": navail,
             "max_recovery_pct": round(max_rec, 2), "day_of_max_recovery": day_rec,
@@ -138,7 +171,7 @@ def compute_outcome(ticker, scan_date, ref_close=None, horizon=None):
             HEADER[10]: touched_up, "day_touched_up": day_up,
             HEADER[12]: touched_dn, "day_touched_down": day_dn,
             "last_close_pct": round(float(closes.iloc[-1]), 2),
-            "dN_date": str(fwd.index[-1].date()), **sub, **trough}
+            "dN_date": str(fwd.index[-1].date()), **sub, **trough, **shd}
 
 
 def to_matrix(rows):
