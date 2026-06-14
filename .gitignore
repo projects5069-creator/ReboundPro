@@ -2,6 +2,7 @@
 .env
 google_credentials.json
 oauth_token.json
+streamlit_cloud_secrets.toml
 *.key
 
 # Python
