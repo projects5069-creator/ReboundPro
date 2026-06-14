@@ -23,6 +23,7 @@ anthropic
 
 # Dashboard
 streamlit
+plotly
 
 # Dev / test
 pytest
