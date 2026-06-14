@@ -20,6 +20,7 @@
 ## ▶ NOW (M3 — צבירה)
 - לצבור דאטה (forward, בזמן-אמת).
 - להציץ בדashboard מדי פעם לבריאות-הצנרת.
+- **סוכן-בריאות `health_monitor.py`** (M3-monitor): 10 בדיקות-צינור ב-5 עמודים (Freshness/Volume/Schema/Field/Ops), READ-ONLY מול Sheet, `--morning`/`--evening`, exit 0/1/2, `health_log.jsonl` מקומי. **בקרה בלבד — לא edge** (ראה docs/MONITORING.md). להריץ בוקר/ערב.
 
 ## ⛔ BLOCKED עד M4=go
 - מנוע ניקוד/החלטה.
