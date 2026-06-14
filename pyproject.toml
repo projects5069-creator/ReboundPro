@@ -3,6 +3,17 @@ name = "reboundpro"
 version = "0.1.0"
 description = "Research system for catching intraday-drop rebounds (long) on NASDAQ+NYSE. Simulation only."
 requires-python = ">=3.11"
+# Runtime deps for the Streamlit Cloud dashboard (Cloud installs from uv.lock).
+# dashboard.py -> streamlit, plotly, pandas ; sheets_manager.py -> gspread,
+# google-auth ; config.py -> stdlib only. (Collector scripts run in GitHub
+# Actions, which pip-installs their own deps in the workflow.)
+dependencies = [
+    "streamlit",
+    "plotly",
+    "pandas",
+    "gspread",
+    "google-auth",
+]
 
 [tool.ruff]
 line-length = 100
