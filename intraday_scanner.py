@@ -25,15 +25,32 @@ Usage:
 import argparse
 import logging
 import time
-from datetime import date, datetime
+from datetime import date, datetime, time as dtime
 
+import pandas as pd
 import pytz
 import yfinance as yf
+import exchange_calendars as ec
 
 import config
 import scanner as sc
 
 ET = pytz.timezone("America/New_York")
+MARKET_OPEN = dtime(9, 30)
+MARKET_CLOSE = dtime(16, 0)
+
+
+def is_market_hours(now=None):
+    """True iff NYSE is open right now: a trading session (calendar-aware,
+    handles weekends + holidays) AND 09:30–16:00 ET. Operational guard only."""
+    now = now or datetime.now(ET)
+    if now.tzinfo is None:
+        now = ET.localize(now)
+    now = now.astimezone(ET)
+    cal = ec.get_calendar("XNYS")
+    if not cal.is_session(pd.Timestamp(now.date())):
+        return False
+    return MARKET_OPEN <= now.time() <= MARKET_CLOSE
 log = logging.getLogger("intraday")
 logging.basicConfig(level=logging.INFO, format="%(asctime)s %(levelname)-7s %(message)s",
                     datefmt="%H:%M:%S")
@@ -178,7 +195,14 @@ def main():
     ap.add_argument("--date", type=lambda s: datetime.strptime(s, "%Y-%m-%d").date(), default=None)
     ap.add_argument("--dry-run", action="store_true")
     ap.add_argument("--tab", default=config.TAB_WATCHLIST)
+    ap.add_argument("--force", action="store_true",
+                    help="bypass the market-hours guard (testing / off-hours)")
     args = ap.parse_args()
+
+    # operational market-hours guard — exit cleanly when NYSE is closed
+    if not args.force and not is_market_hours():
+        log.info("Market closed (outside 09:30–16:00 ET or non-trading day) — no-op.")
+        return []
 
     scan_date = sc.last_trading_day(args.date or date.today())
     log.info("Intraday scan date: %s | tab: %s", scan_date, args.tab)
