@@ -1,0 +1,14 @@
+{
+  "_comment": "ReboundPro skeleton — monthly tab->sheet-ID mapping (mirrors RidingHigh pattern). Populate real IDs at Phase 1.",
+  "_tabs": [
+    "watchlist_live",
+    "analysis",
+    "catch_all",
+    "decisions",
+    "paper_portfolio",
+    "post_analysis",
+    "market_context",
+    "daily_summary",
+    "validation"
+  ]
+}

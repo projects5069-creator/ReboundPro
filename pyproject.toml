@@ -1,0 +1,12 @@
+[project]
+name = "reboundpro"
+version = "0.1.0"
+description = "Research system for catching intraday-drop rebounds (long) on NASDAQ+NYSE. Simulation only."
+requires-python = ">=3.11"
+
+[tool.ruff]
+line-length = 100
+target-version = "py311"
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]

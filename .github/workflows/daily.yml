@@ -1,0 +1,52 @@
+name: ReboundPro Daily Collector
+
+# US market closes 16:00 ET = 20:00 UTC (EDT, summer) / 21:00 UTC (EST, winter).
+# 22:30 UTC gives a 1.5–2.5h buffer for yfinance EOD daily bars to settle,
+# year-round, without needing to change the cron across DST.
+# Mon–Fri (UTC) ≈ US trading week; US holidays are handled by the scanner's
+# exchange-calendar last_trading_day() + scan_date upsert (re-run safe).
+on:
+  schedule:
+    - cron: "30 22 * * 1-5"
+  workflow_dispatch: {}        # allow manual runs for testing
+
+concurrency:
+  group: reboundpro-daily
+  cancel-in-progress: false
+
+jobs:
+  collect:
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+
+      - name: Install dependencies
+        run: |
+          python -m pip install --upgrade pip
+          pip install finvizfinance yfinance gspread google-auth pandas numpy pytz exchange_calendars
+
+      - name: Restore service-account credentials from secret
+        env:
+          GOOGLE_CREDENTIALS_JSON: ${{ secrets.GOOGLE_CREDENTIALS_JSON }}
+        run: printf '%s' "$GOOGLE_CREDENTIALS_JSON" > google_credentials.json
+
+      - name: Scanner — find today's qualifying drops
+        env:
+          REBOUND_SHEET_ID: ${{ secrets.REBOUND_SHEET_ID }}
+          APCA_API_KEY_ID: ${{ secrets.APCA_API_KEY_ID }}
+          APCA_API_SECRET_KEY: ${{ secrets.APCA_API_SECRET_KEY }}
+        run: python scanner.py
+
+      - name: Post-analysis — update D1..D+N outcomes (upsert)
+        env:
+          REBOUND_SHEET_ID: ${{ secrets.REBOUND_SHEET_ID }}
+        run: python post_analysis_collector.py
+
+      - name: Remove credentials
+        if: always()
+        run: rm -f google_credentials.json

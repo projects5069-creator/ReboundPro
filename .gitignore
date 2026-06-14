@@ -1,0 +1,25 @@
+# Secrets — never commit
+.env
+google_credentials.json
+oauth_token.json
+*.key
+
+# Python
+__pycache__/
+*.py[cod]
+.venv/
+venv/
+*.egg-info/
+.pytest_cache/
+.ruff_cache/
+
+# Data / outputs
+data/
+research/phase0/*.csv
+research/phase0/*.parquet
+research/phase0/verdict.json
+
+# OS / editor
+.DS_Store
+.idea/
+.vscode/

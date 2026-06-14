@@ -1,0 +1,29 @@
+# ReboundPro — skeleton dependency list (uv-managed; see modern-python)
+# Pin exact versions at first real implementation.
+
+# Data / numerics
+pandas
+numpy
+pytz
+pandas_market_calendars
+
+# Data providers
+polygon-api-client      # primary intraday
+requests                # FMP / Finnhub REST
+yfinance                # Phase 0 historical fallback
+finvizfinance           # free screener (M1 scanner candidate source)
+exchange_calendars      # NYSE trading-day calendar
+
+# Storage
+gspread
+google-auth
+
+# LLM (catalyst classifier only)
+anthropic
+
+# Dashboard
+streamlit
+
+# Dev / test
+pytest
+ruff
