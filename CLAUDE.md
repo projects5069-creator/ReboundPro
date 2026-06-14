@@ -21,6 +21,7 @@
 - מפתחות/סודות ב-`.env` (gitignored) + GitHub Actions secrets. לעולם לא ב-repo.
 - Google Sheets רוטציה חודשית; להיזהר מיישור עמודות (השתמש ב-`sheets_manager.upsert_by_key` — מיזוג לפי שם-עמודה, migration-safe).
 - pandas 2.x: `.map()` לא `.applymap()`.
+- **Clipboard / העתקת-פלט:** ה-Stop hook הגלובלי `~/bin/cc-copy-last` (ב-`~/.claude/settings.json`) חל גם כאן אבל **אינו מגיע ל-clipboard** (pbcopy מסונבדק — אומת לא-עובד). השיטה **שעובדת**: עטוף את הפקודה ב-`~/bin/rh-run 'cmd'` בטרמינל אמיתי, ואז Cmd+V. אל תציע Stop-hook auto-copy.
 
 ---
 
