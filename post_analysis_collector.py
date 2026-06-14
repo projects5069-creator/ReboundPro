@@ -32,7 +32,13 @@ HEADER = [
     f"touched_down_{int(config.TOUCH_DOWN_PCT)}pct", "day_touched_down",
     "last_close_pct", "dN_date", "collected_at",
 ] + [f"max_recovery_{w}d" for w in config.POST_ANALYSIS_SUBWINDOWS] \
-  + [f"max_further_drop_{w}d" for w in config.POST_ANALYSIS_SUBWINDOWS]
+  + [f"max_further_drop_{w}d" for w in config.POST_ANALYSIS_SUBWINDOWS] \
+  + [  # recovery-from-trough (M3 — DESCRIPTIVE reversal record, NOT an entry signal)
+    "trough_price",                    # lowest price touched in the forward window
+    "trough_day",                      # D+n of the trough (== day_of_max_drop)
+    "recovery_from_trough_pct",        # (last_close - trough)/trough * 100
+    "max_recovery_from_trough_pct",    # peak high since the trough vs trough (>=0)
+  ]
 
 
 def expected_forward_sessions(scan_date, horizon):
@@ -108,6 +114,23 @@ def compute_outcome(ticker, scan_date, ref_close=None, horizon=None):
         sub[f"max_recovery_{w}d"] = round(float(hw.max()), 2) if len(hw) else ""
         sub[f"max_further_drop_{w}d"] = round(float(lw.min()), 2) if len(lw) else ""
 
+    # recovery-from-trough (DESCRIPTIVE reversal record — records the bounce off the
+    # low, does NOT decide on it; no entry threshold). Trough = lowest forward Low.
+    trough_idx = int(fwd["Low"].values.argmin())
+    trough_price = float(fwd["Low"].iloc[trough_idx])
+    trough_day = trough_idx + 1                       # D+n (== day_of_max_drop)
+    last_close = float(fwd["Close"].iloc[-1])
+    if trough_price > 0:
+        rec_from_trough = round((last_close - trough_price) / trough_price * 100, 2)
+        # peak high from the trough day onward, vs the trough price (>= 0)
+        max_high_since = float(fwd.iloc[trough_idx:]["High"].max())
+        max_rec_from_trough = round((max_high_since - trough_price) / trough_price * 100, 2)
+    else:
+        rec_from_trough = max_rec_from_trough = ""
+    trough = {"trough_price": round(trough_price, 2), "trough_day": trough_day,
+              "recovery_from_trough_pct": rec_from_trough,
+              "max_recovery_from_trough_pct": max_rec_from_trough}
+
     return {**base, "ref_close": round(ref_close, 2), "status": status,
             "forward_days_available": navail,
             "max_recovery_pct": round(max_rec, 2), "day_of_max_recovery": day_rec,
@@ -115,7 +138,7 @@ def compute_outcome(ticker, scan_date, ref_close=None, horizon=None):
             HEADER[10]: touched_up, "day_touched_up": day_up,
             HEADER[12]: touched_dn, "day_touched_down": day_dn,
             "last_close_pct": round(float(closes.iloc[-1]), 2),
-            "dN_date": str(fwd.index[-1].date()), **sub}
+            "dN_date": str(fwd.index[-1].date()), **sub, **trough}
 
 
 def to_matrix(rows):

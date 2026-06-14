@@ -27,10 +27,16 @@ NUM_WATCH = ["drop_pct_from_open", "close_pct_from_open", "pct_change_prevclose"
              "first_cross_price", "first_cross_drop_pct", "intraday_low",
              "recovery_from_low_pct", "scans_count",
              # gradual-drop numerics
-             "drop_pct_window", "ref_close_window"]
+             "drop_pct_window", "ref_close_window",
+             # prior-decline context numerics (M3)
+             "pct_from_52w_high", "pct_from_52w_low",
+             "prior_decline_20d_pct", "prior_decline_60d_pct"]
 NUM_POST = ["ref_close", "max_recovery_pct", "max_further_drop_pct",
             "last_close_pct", "forward_days_available", "horizon",
-            "day_of_max_recovery", "day_of_max_drop"] \
+            "day_of_max_recovery", "day_of_max_drop",
+            # recovery-from-trough numerics (M3)
+            "trough_price", "trough_day",
+            "recovery_from_trough_pct", "max_recovery_from_trough_pct"] \
     + [f"max_recovery_{w}d" for w in config.POST_ANALYSIS_SUBWINDOWS] \
     + [f"max_further_drop_{w}d" for w in config.POST_ANALYSIS_SUBWINDOWS]
 NUM_SUMMARY = ["total_finviz_candidates", "passed_floor", "below_min_price",
@@ -45,18 +51,21 @@ PCT_COLS = {
     "spy_change_pct", "sector_etf_change_pct", "recovery_from_low_pct",
     "first_cross_drop_pct", "max_recovery_pct", "max_further_drop_pct",
     "last_close_pct", "pct_from_open", "drop_pct_window",
+    "pct_from_52w_high", "pct_from_52w_low", "prior_decline_20d_pct",
+    "prior_decline_60d_pct", "recovery_from_trough_pct", "max_recovery_from_trough_pct",
 } | {f"max_recovery_{w}d" for w in config.POST_ANALYSIS_SUBWINDOWS} \
   | {f"max_further_drop_{w}d" for w in config.POST_ANALYSIS_SUBWINDOWS}
 INT_COLS = {
     "volume", "avg_volume_20d", "adv_dollar", "market_cap", "scans_count",
     "forward_days_available", "horizon", "day_of_max_recovery", "day_of_max_drop",
+    "trough_day",
     "total_finviz_candidates", "passed_floor", "below_min_price", "below_min_cap",
     "below_min_adv", "drop_below_threshold", "other_rejects",
 }
 FLOAT_COLS = {
     "price", "open", "high", "low_so_far", "prev_close", "rsi_14",
     "volume_ratio", "ref_close", "first_cross_price", "intraday_low",
-    "ref_close_window",
+    "ref_close_window", "trough_price",
 }
 
 # Finviz-style fundamental categories for the stock card (display grouping only).
@@ -230,6 +239,9 @@ def _watchlist(watch, drop_kind, days):
     base = ["scan_date", "ticker", "drop_kind", "exchange"]
     mid = ["price", "liquidity_bucket", "sector", "market_regime", "drop_type",
            "adv_dollar", "market_cap", "rsi_14"]
+    # prior-decline context (descriptive) — shown for both hypotheses
+    context = ["pct_from_52w_high", "pct_from_52w_low",
+               "prior_decline_20d_pct", "prior_decline_60d_pct"]
     if drop_kind == "gradual_drop":
         dropcol = ["drop_pct_window"]
         extra = ["lookback_trading_days", "ref_close_window", "source"]
@@ -240,7 +252,7 @@ def _watchlist(watch, drop_kind, days):
                  "intraday_low", "intraday_low_at", "recovery_from_low_pct",
                  "reversal_confirmed", "scans_count", "last_update_at"]
         sortcol = "drop_pct_from_open"
-    cols = [c for c in base + dropcol + mid + extra if c in view.columns]
+    cols = [c for c in base + dropcol + mid + context + extra if c in view.columns]
     sortcol = sortcol if sortcol in view.columns else "scan_date"
     st.caption(f"{len(view)} שורות")
     st.dataframe(styled(view[cols].sort_values(sortcol)),
@@ -278,6 +290,15 @@ def _stock_card(watch, post, ts, fund, news):
         kpi(m[4], "sector", r0.get("sector", "—"))
         kpi(m[5], "regime", r0.get("market_regime", "—"))
 
+        # prior-decline context (descriptive — NOT an entry signal)
+        ctx = [("מהשיא 52ש'", r0.get("pct_from_52w_high")),
+               ("מהשפל 52ש'", r0.get("pct_from_52w_low")),
+               ("ירידה 20 ימים", r0.get("prior_decline_20d_pct")),
+               ("ירידה 60 ימים", r0.get("prior_decline_60d_pct"))]
+        st.caption("**הקשר ירידה קודמת (תיאורי, לא אות-כניסה):** " +
+                   " · ".join(f"{lbl}: {v:.2f}%" if pd.notna(v) else f"{lbl}: —"
+                              for lbl, v in ctx))
+
     # 1) intraday time-series
     st.markdown("**מסלול תוך-יומי מדורג (intraday_timeseries · D0–D3 כל 10ד' · D4–D20 ~3/יום)**")
     if ts.empty:
@@ -307,7 +328,9 @@ def _stock_card(watch, post, ts, fund, news):
         else:
             pcols = ["scan_date", "ticker", "status", "forward_days_available",
                      "ref_close", "max_recovery_pct", "day_of_max_recovery",
-                     "max_further_drop_pct", "day_of_max_drop", "last_close_pct", "dN_date"]
+                     "max_further_drop_pct", "day_of_max_drop",
+                     "trough_price", "trough_day", "recovery_from_trough_pct",
+                     "max_recovery_from_trough_pct", "last_close_pct", "dN_date"]
             pcols = [c for c in pcols if c in pvc.columns]
             st.dataframe(styled(pvc[pcols]), width="stretch", hide_index=True)
             sub = [(w, f"max_recovery_{w}d") for w in config.POST_ANALYSIS_SUBWINDOWS
@@ -376,7 +399,11 @@ def _post(post):
     dn_col = next((c for c in post.columns if c.startswith("touched_down_")), None)
     cols = ["scan_date", "ticker", "status", "forward_days_available", "ref_close",
             "max_recovery_pct", "day_of_max_recovery", "max_further_drop_pct",
-            "day_of_max_drop", up_col, dn_col, "last_close_pct", "dN_date"]
+            "day_of_max_drop",
+            # recovery-from-trough group (descriptive reversal record)
+            "trough_price", "trough_day", "recovery_from_trough_pct",
+            "max_recovery_from_trough_pct",
+            up_col, dn_col, "last_close_pct", "dN_date"]
     cols = [c for c in cols if c and c in pv.columns]
     st.caption(f"{len(pv)} שורות · halt/delist מוצג מפורשות כסטטוס (לא מושמט)")
     st.dataframe(styled(pv[cols]), width="stretch", hide_index=True, height=460)

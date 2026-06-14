@@ -183,6 +183,14 @@ WATCHLIST_HEADER = [
     "lookback_trading_days",     # gradual: GRADUAL_LOOKBACK_DAYS ; intraday: ""
     "drop_pct_window",           # gradual: % drop over the lookback window ; intraday: ""
     "ref_close_window",          # gradual: close N trading days ago ; intraday: ""
+    # prior-decline context (M3 — DESCRIPTIVE feature, NOT an entry signal).
+    # Captured by scanner.py (EOD intraday_drop) + gradual_scanner.py; computed
+    # from the same yfinance history already pulled (no extra calls). Blank for
+    # rows captured live by intraday_scanner (source="intraday").
+    "pct_from_52w_high",         # (close - 52w high)/52w high * 100  (<=0; how far below)
+    "pct_from_52w_low",          # (close - 52w low)/52w low * 100    (>=0; how far above)
+    "prior_decline_20d_pct",     # return over the 20 trading days BEFORE capture
+    "prior_decline_60d_pct",     # return over the 60 trading days BEFORE capture
 ]
 CREDS_PATH = os.path.join(os.path.dirname(__file__), "google_credentials.json")
 
@@ -198,7 +206,11 @@ RISK_OFF_SPY_PCT = -1.0              # SPY day move ≤ this → "risk_off" regi
 
 # ── Misc ─────────────────────────────────────────────────────────────────────
 RATE_LIMIT_SLEEP = 0.30             # seconds between per-ticker yfinance calls
-HISTORY_DAYS_FETCH = 90             # calendar days pulled per candidate (ADV/RSI)
+HISTORY_DAYS_FETCH = 90             # calendar days pulled per candidate (ADV/RSI) — intraday
+# EOD scanners pull a longer single history window (same one call, no extra calls)
+# so they can compute the 52-week range + the 60-trading-day prior-decline context.
+# 400 calendar days ≈ 275 trading sessions > 252 (52 weeks) + 60-session buffer.
+EOD_HISTORY_DAYS = 400
 
 
 def classify_market_cap(mc):

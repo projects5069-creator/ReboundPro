@@ -142,7 +142,7 @@ def build_snapshot(row, scan_date, ref_date, spy_chg, now):
 
     try:
         h = yf.Ticker(ticker).history(
-            start=str(scan_date - timedelta(days=config.HISTORY_DAYS_FETCH)),
+            start=str(scan_date - timedelta(days=config.EOD_HISTORY_DAYS)),
             end=str(scan_date + timedelta(days=1)), auto_adjust=True)
     except Exception:
         return None, "yf_error"
@@ -201,6 +201,7 @@ def build_snapshot(row, scan_date, ref_date, spy_chg, now):
         "lookback_trading_days": config.GRADUAL_LOOKBACK_DAYS,
         "drop_pct_window": drop_pct_window, "ref_close_window": round(ref_close, 2),
     }
+    snap.update(sc.prior_context(h, prior, cl))   # descriptive context, not a signal
     return snap, "ok"
 
 

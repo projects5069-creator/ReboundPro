@@ -77,6 +77,34 @@ def rsi_14(close: pd.Series):
     return round(v, 2) if v == v else None
 
 
+def prior_context(h, prior, cl):
+    """DESCRIPTIVE prior-decline context at capture — collection only, NOT a signal.
+
+    52W range from the trailing ~252 sessions up to scan_date (`h` is already
+    filtered to <= scan_date); prior declines are returns over the 20/60 trading
+    days BEFORE the capture day (`prior` = sessions strictly before scan_date).
+    Records context — sets NO threshold and makes NO entry decision.
+    """
+    out = {"pct_from_52w_high": "", "pct_from_52w_low": "",
+           "prior_decline_20d_pct": "", "prior_decline_60d_pct": ""}
+    win = h.tail(252)
+    if len(win):
+        hi = float(win["High"].max())
+        lo = float(win["Low"].min())
+        if hi > 0:
+            out["pct_from_52w_high"] = round((cl - hi) / hi * 100, 2)
+        if lo > 0:
+            out["pct_from_52w_low"] = round((cl - lo) / lo * 100, 2)
+    pc = prior["Close"]
+    for n, key in ((20, "prior_decline_20d_pct"), (60, "prior_decline_60d_pct")):
+        if len(pc) >= n + 1:
+            c0 = float(pc.iloc[-(n + 1)])
+            c1 = float(pc.iloc[-1])
+            if c0 > 0:
+                out[key] = round((c1 - c0) / c0 * 100, 2)
+    return out
+
+
 def day_change_pct(ticker, scan_date):
     """(close - prev_close)/prev_close*100 for a single ticker on scan_date."""
     try:
@@ -168,7 +196,7 @@ def build_snapshot(row, scan_date, spy_chg, now_et):
     # yfinance OHLC + history for the from-open rule and ADV
     try:
         h = yf.Ticker(ticker).history(
-            start=str(scan_date - timedelta(days=config.HISTORY_DAYS_FETCH)),
+            start=str(scan_date - timedelta(days=config.EOD_HISTORY_DAYS)),
             end=str(scan_date + timedelta(days=1)), auto_adjust=True)
     except Exception:
         return None, "yf_error"
@@ -223,6 +251,7 @@ def build_snapshot(row, scan_date, spy_chg, now_et):
         "scanned_at": now_et.strftime("%Y-%m-%d %H:%M:%S %Z"),
         "source": "eod_close", "drop_kind": "intraday_drop",
     }
+    snap.update(prior_context(h, prior, cl))   # descriptive context, not a signal
     return snap, "ok"
 
 

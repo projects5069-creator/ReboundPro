@@ -23,7 +23,7 @@
 | `intraday_scanner.py` | intraday ~10ד': מסלול תוך-יומי + dedup; `is_market_hours()` guard |
 | `fundamentals.py` | Finviz quote ~89 שדות → `fundamentals_snapshot` (raw+`_num`) |
 | `catalyst.py` | Finnhub news D-3..D + earnings-flag → `news_snapshot` (raw בלבד) |
-| `post_analysis_collector.py` | D1..D+20 + תת-חלונות D+3/5/10/20; halt/delist/pending מפורש |
+| `post_analysis_collector.py` | D1..D+20 + תת-חלונות D+3/5/10/20; halt/delist/pending מפורש; **recovery-from-trough** (היפוך מהשפל, תיאורי) |
 | `intraday_timeseries.py` | M3 מעקב מדורג → `intraday_timeseries`: D0–D3 כל 10ד', D4–D20 ~3/יום (open/mid/close); key=(scan_date,ticker,timestamp); self-gating לחלונות D4–D20 (עמיד לדריפט-cron); רוכב על טריגר ה-intraday; floor יורש מ-watchlist; hours-guard מ-`intraday_scanner` |
 | `gradual_scanner.py` | M3 סורק-EOD **השערה נפרדת** (`gradual_drop`): close היום ≥10% מתחת ל-close לפני 5 ימי-מסחר (מסנן Finviz `Performance: Week -10%` + אימות yfinance); אותה רצפת-נזילות; מתייג `drop_kind="gradual_drop"`, `source="gradual_eod"`; דדופ חוצה-סוגים 20 ימי-מסחר (`recent_capture_set`); משתמש ב-helpers של `scanner.py` ללא נגיעה בו; קורא fundamentals inline. **value-trap: פונדמנטלי=פיצ'ר לא פילטר; אפס החלטת-כניסה; הכרעה ל-M4.** post_analysis/intraday_timeseries/catalyst קולטים את השורות אוטומטית |
 | `sheets_manager.py` | I/O ל-Sheets; `upsert_by_key` (merge לפי שם-עמודה, migration-safe); creds: file→st.secrets→env |
@@ -47,6 +47,7 @@ Streamlit Cloud, נפרס מ-`dashboard.py` (branch `main`). Cloud מתקין מ
 - **שתי השערות נאספות בנפרד** (עמודה `drop_kind` ב-watchlist_live): `intraday_drop` (צניחה חדה תוך-יומית, scanner+intraday_scanner) ו-`gradual_drop` (ירידה הדרגתית ≥10% ב-5 ימי-מסחר, gradual_scanner). `source` נשאר provenance (eod_close/intraday/gradual_eod). דדופ חוצה-סוגים: 20 ימי-מסחר. שורות legacy ללא drop_kind נחשבות intraday_drop בדashboard.
 - רצפת-נזילות: מחיר ≥ $5 · ADV$ ≥ $5M · שווי ≥ $300M (מוציא nano/micro).
 - סף צניחה: ≥10% מהפתיחה (grid M4: 7/10/15) · סף gradual: ≥10% ב-5 ימי-מסחר.
+- **מדדי-איסוף תיאוריים (M3.6 — פיצ'רים, לא אותות-כניסה; הכרעה ל-M4):** (א) *recovery-from-trough* ב-post_analysis (`trough_price/trough_day/recovery_from_trough_pct/max_recovery_from_trough_pct`) — היפוך מהשפל. (ב) *prior-decline context* ב-watchlist (`pct_from_52w_high/pct_from_52w_low/prior_decline_20d_pct/prior_decline_60d_pct`) — מחושב ב-`scanner.prior_context` (helper משותף) מחלון `EOD_HISTORY_DAYS=400` (אותה קריאה, ללא רשת נוספת). נאספים ב-scanner+gradual בלבד → שורות intraday-live (source=intraday) לא נושאות prior-decline.
 - חלון תוצאות: D1..D+20 (+ תת-חלונות 3/5/10/20).
 - עלות-סטרס M4: 0.50% round-trip.
 
