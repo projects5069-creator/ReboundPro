@@ -106,6 +106,14 @@ FUND_NUMERIC = [
 ]
 TAB_FUNDAMENTALS = "fundamentals_snapshot"
 
+# ── News / catalyst capture (Finnhub) — collection only, NO classification ───
+TAB_NEWS = "news_snapshot"
+NEWS_LOOKBACK_DAYS = 3               # company-news window: [scan_date - N, scan_date]
+NEWS_MAX_HEADLINES = 5              # store up to this many most-recent headlines
+NEWS_EARNINGS_WINDOW_DAYS = 7      # flag earnings within +/- this many days
+FINNHUB_API_KEY = os.environ.get("FINNHUB_API_KEY", "")
+FINNHUB_RATE_SLEEP = 1.1            # seconds between tickers (free tier 60/min)
+
 # ── Storage ──────────────────────────────────────────────────────────────────
 # SA cannot create sheets (Drive quota). User creates + shares the sheet with the
 # service account, then sets the ID here or via env REBOUND_SHEET_ID.
