@@ -440,22 +440,28 @@ def backfill_missing_context(dry_run=False):
     if not all(k in idx for k in ("scan_date", "ticker")):
         log.error("watchlist_live missing scan_date/ticker columns.")
         return [], 0
-    have_ctx = [c for c in CONTEXT_FIELDS if c in idx]
 
-    def is_blank(r, c):
-        i = idx[c]
-        return i >= len(r) or r[i] in ("", None)
+    def row_needs_context(r):
+        # a field is "missing" if its column is absent from the live header (schema
+        # not migrated yet) OR present-but-blank in this row.
+        for c in CONTEXT_FIELDS:
+            if c not in idx:
+                return True
+            i = idx[c]
+            if i >= len(r) or r[i] in ("", None):
+                return True
+        return False
 
     targets = []
     for r in wd:
         sd, tk = r[idx["scan_date"]], r[idx["ticker"]]
         if not sd or not tk:
             continue
-        if any(is_blank(r, c) for c in have_ctx):
+        if row_needs_context(r):
             sector = r[idx["sector"]] if "sector" in idx and idx["sector"] < len(r) else ""
             targets.append((sd, tk, sector))
     log.info("Context backfill: %d/%d rows missing >=1 of %d context fields.",
-             len(targets), len(wd), len(have_ctx))
+             len(targets), len(wd), len(CONTEXT_FIELDS))
 
     out = []
     for sd, tk, sector in targets:
