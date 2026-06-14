@@ -46,6 +46,19 @@ INTRADAY_DROP_THRESHOLD = 10.0       # % below the day's OPEN (current price)
 REVERSAL_CONFIRM_PCT = 2.0           # path flag: price >= this % above intraday low
                                      #   (descriptive path fact — NOT a trade signal)
 
+# ── Intraday time-series (M3 tiered tracking) ────────────────────────────────
+# A per-tracked-stock time-series of (price, pct_from_open, volume) at a
+# resolution that STEPS DOWN with the number of trading days since the drop day
+# (D0 = scan_date). Collection only — NO scoring / signals. Reuses the existing
+# 10-min intraday trigger; the D4–D20 tier self-gates to ~3 points/day.
+TAB_TIMESERIES = "intraday_timeseries"
+TIMESERIES_HEADER = ["scan_date", "ticker", "timestamp", "price",
+                     "pct_from_open", "volume"]
+TS_TIER1_MAX_DAY = 3        # D0–D3: record on every 10-min intraday run
+TS_TIER2_MAX_DAY = 20       # D4–D20: ~3 points/day (open / mid / close approx)
+# pct_from_open is measured vs the CURRENT day's open (intraday move), so on D0
+# it equals the drop and on later days it is that session's intraday change.
+
 # ── Fundamentals snapshot (Finviz quote ticker_fundament) ────────────────────
 # Frozen field list (the 90 Finviz fields minus the junk 'Trades'). Captured
 # point-in-time per candidate — some fields (Short Float, Inst Own, Recom,

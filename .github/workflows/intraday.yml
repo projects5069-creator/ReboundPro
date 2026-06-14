@@ -39,6 +39,10 @@ jobs:
         env:
           REBOUND_SHEET_ID: ${{ secrets.REBOUND_SHEET_ID }}
         run: python intraday_scanner.py
+      - name: Intraday time-series (tiered D0–D3 10m / D4–D20 ~3h)
+        env:
+          REBOUND_SHEET_ID: ${{ secrets.REBOUND_SHEET_ID }}
+        run: python intraday_timeseries.py
       - name: Remove credentials
         if: always()
         run: rm -f google_credentials.json

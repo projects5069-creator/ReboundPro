@@ -16,6 +16,7 @@
 | 2026-06-14 | `882a9b2` | chore: force rebuild ל-Streamlit Cloud |
 | 2026-06-14 | `40ad829` | deps: הצהרת תלויות dashboard ב-pyproject + uv.lock (Cloud צורך uv.lock) |
 | 2026-06-14 | _(this commit)_ | docs: מערך-תיעוד מלא (MASTERPLAN/ACTIONS_LOG/TASKS/PROJECT_KNOWLEDGE) + חיווט-זיכרון ב-CLAUDE.md |
+| 2026-06-14 | _(this commit)_ | M3: מעקב מדורג (`intraday_timeseries.py` + טאב + צעד workflow, D0–D3 10ד'/D4–D20 ~3/יום) · כרטיס-מניה בדashboard (intraday/post/fundamentals-Finviz/news, view-only) · תיקוני-תצוגה רוחביים (`%` בתא/פסיקים/2-ספרות + חשיפת שדות-מסלול ב-watchlist) |
 
 ## Next
 <!-- הוסף כאן ערכים חדשים מתוארכים בכל סוף-סשן -->
