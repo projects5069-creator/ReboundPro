@@ -191,6 +191,14 @@ WATCHLIST_HEADER = [
     "pct_from_52w_low",          # (close - 52w low)/52w low * 100    (>=0; how far above)
     "prior_decline_20d_pct",     # return over the 20 trading days BEFORE capture
     "prior_decline_60d_pct",     # return over the 60 trading days BEFORE capture
+    # research-based context signals (M3 — DESCRIPTIVE features, NOT entry signals).
+    # vix_level: ^VIX close on scan_date (Nagel: reversal premium ~ VIX) — one fetch/run.
+    # drop_day_rel_volume: scan-day volume / avg_volume_20d (capitulation context).
+    # sector_momentum_*: sector-ETF return over 5/20 trading days (enhanced-reversal).
+    "vix_level",
+    "drop_day_rel_volume",
+    "sector_momentum_5d",
+    "sector_momentum_20d",
 ]
 CREDS_PATH = os.path.join(os.path.dirname(__file__), "google_credentials.json")
 

@@ -127,7 +127,7 @@ def ref_trading_date(scan_date, cal):
 
 
 # ── per-candidate snapshot ───────────────────────────────────────────────────
-def build_snapshot(row, scan_date, ref_date, spy_chg, now):
+def build_snapshot(row, scan_date, ref_date, spy_chg, vix, now):
     ticker = str(row.get("Ticker", "")).strip().upper()
     if not ticker:
         return None, "no_ticker"
@@ -178,6 +178,8 @@ def build_snapshot(row, scan_date, ref_date, spy_chg, now):
     sector = row.get("Sector") or ""
     etf = config.SECTOR_ETF.get(sector)
     sec_chg = sc.etf_change(etf, scan_date) if etf else None
+    mom5, mom20 = sc.etf_momentum(etf, scan_date) if etf else (None, None)
+    drop_day_rel_vol = round(vol / avg_vol_20, 2) if avg_vol_20 else ""
 
     snap = {
         "scan_date": str(scan_date), "ticker": ticker, "exchange": row.get("_exchange", ""),
@@ -200,6 +202,8 @@ def build_snapshot(row, scan_date, ref_date, spy_chg, now):
         "source": "gradual_eod", "drop_kind": "gradual_drop",
         "lookback_trading_days": config.GRADUAL_LOOKBACK_DAYS,
         "drop_pct_window": drop_pct_window, "ref_close_window": round(ref_close, 2),
+        "vix_level": vix, "drop_day_rel_volume": drop_day_rel_vol,
+        "sector_momentum_5d": mom5, "sector_momentum_20d": mom20,
     }
     snap.update(sc.prior_context(h, prior, cl))   # descriptive context, not a signal
     return snap, "ok"
@@ -221,6 +225,7 @@ def scan(scan_date):
         return [], {}
 
     spy_chg = sc.day_change_pct(config.MARKET_PROXY, scan_date)
+    vix = sc.vix_close(scan_date)                     # once per run (same for all tickers)
     now = datetime.now(ET).strftime("%Y-%m-%d %H:%M:%S %Z")
 
     wh, wd = sm.read_rows(config.SHEET_ID, config.TAB_WATCHLIST) if config.SHEET_ID else ([], [])
@@ -234,7 +239,7 @@ def scan(scan_date):
         if ticker and ticker in recent:
             reasons["dedup_recent"] = reasons.get("dedup_recent", 0) + 1
             continue
-        snap, why = build_snapshot(r, scan_date, ref_date, spy_chg, now)
+        snap, why = build_snapshot(r, scan_date, ref_date, spy_chg, vix, now)
         reasons[why] = reasons.get(why, 0) + 1
         if snap:
             rows.append(snap)

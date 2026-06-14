@@ -30,7 +30,10 @@ NUM_WATCH = ["drop_pct_from_open", "close_pct_from_open", "pct_change_prevclose"
              "drop_pct_window", "ref_close_window",
              # prior-decline context numerics (M3)
              "pct_from_52w_high", "pct_from_52w_low",
-             "prior_decline_20d_pct", "prior_decline_60d_pct"]
+             "prior_decline_20d_pct", "prior_decline_60d_pct",
+             # research-based context signals (M3)
+             "vix_level", "drop_day_rel_volume",
+             "sector_momentum_5d", "sector_momentum_20d"]
 NUM_POST = ["ref_close", "max_recovery_pct", "max_further_drop_pct",
             "last_close_pct", "forward_days_available", "horizon",
             "day_of_max_recovery", "day_of_max_drop",
@@ -53,6 +56,7 @@ PCT_COLS = {
     "last_close_pct", "pct_from_open", "drop_pct_window",
     "pct_from_52w_high", "pct_from_52w_low", "prior_decline_20d_pct",
     "prior_decline_60d_pct", "recovery_from_trough_pct", "max_recovery_from_trough_pct",
+    "sector_momentum_5d", "sector_momentum_20d",
 } | {f"max_recovery_{w}d" for w in config.POST_ANALYSIS_SUBWINDOWS} \
   | {f"max_further_drop_{w}d" for w in config.POST_ANALYSIS_SUBWINDOWS}
 INT_COLS = {
@@ -65,7 +69,7 @@ INT_COLS = {
 FLOAT_COLS = {
     "price", "open", "high", "low_so_far", "prev_close", "rsi_14",
     "volume_ratio", "ref_close", "first_cross_price", "intraday_low",
-    "ref_close_window", "trough_price",
+    "ref_close_window", "trough_price", "vix_level", "drop_day_rel_volume",
 }
 
 # Finviz-style fundamental categories for the stock card (display grouping only).
@@ -239,9 +243,11 @@ def _watchlist(watch, drop_kind, days):
     base = ["scan_date", "ticker", "drop_kind", "exchange"]
     mid = ["price", "liquidity_bucket", "sector", "market_regime", "drop_type",
            "adv_dollar", "market_cap", "rsi_14"]
-    # prior-decline context (descriptive) — shown for both hypotheses
+    # context signals (descriptive) — shown for both hypotheses
     context = ["pct_from_52w_high", "pct_from_52w_low",
-               "prior_decline_20d_pct", "prior_decline_60d_pct"]
+               "prior_decline_20d_pct", "prior_decline_60d_pct",
+               "vix_level", "drop_day_rel_volume",
+               "sector_momentum_5d", "sector_momentum_20d"]
     if drop_kind == "gradual_drop":
         dropcol = ["drop_pct_window"]
         extra = ["lookback_trading_days", "ref_close_window", "source"]
@@ -298,6 +304,14 @@ def _stock_card(watch, post, ts, fund, news):
         st.caption("**הקשר ירידה קודמת (תיאורי, לא אות-כניסה):** " +
                    " · ".join(f"{lbl}: {v:.2f}%" if pd.notna(v) else f"{lbl}: —"
                               for lbl, v in ctx))
+        # research-based context signals (descriptive — NOT entry signals)
+        vix = r0.get("vix_level"); rv = r0.get("drop_day_rel_volume")
+        sm5 = r0.get("sector_momentum_5d"); sm20 = r0.get("sector_momentum_20d")
+        sig = [("VIX", vix, "{:.2f}"), ("rel-vol יום-צניחה", rv, "{:.2f}×"),
+               ("תנופת-סקטור 5י'", sm5, "{:.2f}%"), ("20י'", sm20, "{:.2f}%")]
+        st.caption("**סממני-הקשר (תיאורי, לא אות-כניסה):** " +
+                   " · ".join(f"{lbl}: {fmt.format(v)}" if pd.notna(v) else f"{lbl}: —"
+                              for lbl, v, fmt in sig))
 
     # 1) intraday time-series
     st.markdown("**מסלול תוך-יומי מדורג (intraday_timeseries · D0–D3 כל 10ד' · D4–D20 ~3/יום)**")

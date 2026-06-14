@@ -161,6 +161,38 @@ def etf_change(symbol, scan_date, _cache={}):
     return val
 
 
+def vix_close(scan_date):
+    """^VIX close on scan_date — same for all tickers that day, so fetch ONCE per
+    run (Nagel: liquidity-supply reversal premium is stronger when VIX is high).
+    Descriptive context, NOT a signal."""
+    try:
+        h = yf.Ticker("^VIX").history(start=str(scan_date - timedelta(days=10)),
+                                      end=str(scan_date + timedelta(days=1)), auto_adjust=True)
+        h = h[h.index.date <= scan_date]
+        return round(float(h["Close"].iloc[-1]), 2) if len(h) else ""
+    except Exception:
+        return ""
+
+
+def etf_momentum(symbol, scan_date, _cache={}):
+    """(5d, 20d) trailing return of a sector ETF up to scan_date. Cached per run
+    (one fetch per ETF, not per ticker). Descriptive context, NOT a signal."""
+    if symbol in _cache:
+        return _cache[symbol]
+    val = (None, None)
+    try:
+        h = yf.Ticker(symbol).history(start=str(scan_date - timedelta(days=60)),
+                                      end=str(scan_date + timedelta(days=1)), auto_adjust=True)
+        c = h[h.index.date <= scan_date]["Close"]
+        m5 = round((c.iloc[-1] / c.iloc[-6] - 1) * 100, 2) if len(c) >= 6 else None
+        m20 = round((c.iloc[-1] / c.iloc[-21] - 1) * 100, 2) if len(c) >= 21 else None
+        val = (m5, m20)
+    except Exception:
+        pass
+    _cache[symbol] = val
+    return val
+
+
 def classify_drop_type(spy_chg, sector_chg):
     if spy_chg is not None and spy_chg <= config.RISK_OFF_SPY_PCT:
         return "systemic"
@@ -180,7 +212,7 @@ def market_regime(spy_chg):
 
 
 # ── per-candidate snapshot ───────────────────────────────────────────────────
-def build_snapshot(row, scan_date, spy_chg, now_et):
+def build_snapshot(row, scan_date, spy_chg, vix, now_et):
     ticker = str(row.get("Ticker", "")).strip().upper()
     if not ticker:
         return None, "no_ticker"
@@ -230,6 +262,8 @@ def build_snapshot(row, scan_date, spy_chg, now_et):
     sector = row.get("Sector") or ""
     etf = config.SECTOR_ETF.get(sector)
     sec_chg = etf_change(etf, scan_date) if etf else None
+    mom5, mom20 = etf_momentum(etf, scan_date) if etf else (None, None)
+    drop_day_rel_vol = round(vol / avg_vol_20, 2) if avg_vol_20 else ""
 
     snap = {
         "scan_date": str(scan_date), "ticker": ticker, "exchange": row.get("_exchange", ""),
@@ -250,6 +284,8 @@ def build_snapshot(row, scan_date, spy_chg, now_et):
         "drop_type": classify_drop_type(spy_chg, sec_chg),
         "scanned_at": now_et.strftime("%Y-%m-%d %H:%M:%S %Z"),
         "source": "eod_close", "drop_kind": "intraday_drop",
+        "vix_level": vix, "drop_day_rel_volume": drop_day_rel_vol,
+        "sector_momentum_5d": mom5, "sector_momentum_20d": mom20,
     }
     snap.update(prior_context(h, prior, cl))   # descriptive context, not a signal
     return snap, "ok"
@@ -261,12 +297,13 @@ def scan(scan_date):
     if cands.empty:
         return [], {}
     spy_chg = day_change_pct(config.MARKET_PROXY, scan_date)
-    log.info("Regime: SPY %s%% on %s -> %s",
-             spy_chg, scan_date, market_regime(spy_chg))
+    vix = vix_close(scan_date)                       # once per run (same for all tickers)
+    log.info("Regime: SPY %s%% on %s -> %s | VIX %s",
+             spy_chg, scan_date, market_regime(spy_chg), vix)
     now_et = datetime.now(ET)
     rows, reasons = [], {}
     for i, (_, r) in enumerate(cands.iterrows(), 1):
-        snap, reason = build_snapshot(r, scan_date, spy_chg, now_et)
+        snap, reason = build_snapshot(r, scan_date, spy_chg, vix, now_et)
         reasons[reason] = reasons.get(reason, 0) + 1
         if snap:
             rows.append(snap)
@@ -304,6 +341,50 @@ def build_summary(scan_date, reasons):
         "other_rejects": other,
         "scanned_at": datetime.now(ET).strftime("%Y-%m-%d %H:%M:%S %Z"),
     }
+
+
+def backfill_intraday_prior_context(scan_date):
+    """Coverage fix (M3.6 gap): intraday_scanner stays light (no year-long pull in
+    the 10-min loop), so source="intraday" rows lack prior-decline context. Fill it
+    HERE in the once-a-day EOD run — only for this scan_date's intraday rows that are
+    still missing it, one history pull per such ticker. Returns count filled.
+    (Descriptive context only — no signal, no decision.)"""
+    import sheets_manager as sm
+    wh, wd = sm.read_rows(config.SHEET_ID, config.TAB_WATCHLIST)
+    if not wd:
+        return 0
+    idx = {c: i for i, c in enumerate(wh)}
+    if not all(k in idx for k in ("scan_date", "ticker", "source", "prior_decline_20d_pct")):
+        return 0
+    sdc, tkc, srcc, pcc = idx["scan_date"], idx["ticker"], idx["source"], idx["prior_decline_20d_pct"]
+    need = [r[tkc] for r in wd
+            if r[sdc] == str(scan_date) and r[srcc] == "intraday"
+            and (pcc >= len(r) or r[pcc] in ("", None))]
+    if not need:
+        return 0
+    log.info("Backfilling prior-decline for %d intraday rows of %s.", len(need), scan_date)
+    rows = []
+    for tk in need:
+        try:
+            h = yf.Ticker(tk).history(
+                start=str(scan_date - timedelta(days=config.EOD_HISTORY_DAYS)),
+                end=str(scan_date + timedelta(days=1)), auto_adjust=True)
+            h = h[h.index.date <= scan_date]
+            prior = h[h.index.date < scan_date]
+            today = h[h.index.date == scan_date]
+            if h.empty or today.empty:
+                continue
+            cl = float(today["Close"].iloc[-1])
+            # partial row: upsert_by_key merges by column NAME, preserving all others
+            rows.append({"scan_date": str(scan_date), "ticker": tk,
+                         **prior_context(h, prior, cl)})
+        except Exception as e:
+            log.warning("backfill %s failed: %s", tk, e)
+        time.sleep(config.RATE_LIMIT_SLEEP)
+    if rows:
+        sm.upsert_by_key(config.SHEET_ID, config.TAB_WATCHLIST, HEADER, rows,
+                         ["scan_date", "ticker"])
+    return len(rows)
 
 
 def main():
@@ -357,6 +438,14 @@ def main():
             log.info("Wrote fundamentals_snapshot: %d new rows (kept %d).", fn, fs)
         except Exception as e:
             log.error("fundamentals snapshot failed (watchlist still written): %s", e)
+
+    # coverage fix: fill prior-decline for this day's intraday-captured rows
+    try:
+        n = backfill_intraday_prior_context(scan_date)
+        if n:
+            log.info("Backfilled prior-decline for %d intraday rows.", n)
+    except Exception as e:
+        log.error("intraday prior-decline backfill failed: %s", e)
     return rows
 
 

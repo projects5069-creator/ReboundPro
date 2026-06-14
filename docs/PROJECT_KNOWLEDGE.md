@@ -47,7 +47,11 @@ Streamlit Cloud, נפרס מ-`dashboard.py` (branch `main`). Cloud מתקין מ
 - **שתי השערות נאספות בנפרד** (עמודה `drop_kind` ב-watchlist_live): `intraday_drop` (צניחה חדה תוך-יומית, scanner+intraday_scanner) ו-`gradual_drop` (ירידה הדרגתית ≥10% ב-5 ימי-מסחר, gradual_scanner). `source` נשאר provenance (eod_close/intraday/gradual_eod). דדופ חוצה-סוגים: 20 ימי-מסחר. שורות legacy ללא drop_kind נחשבות intraday_drop בדashboard.
 - רצפת-נזילות: מחיר ≥ $5 · ADV$ ≥ $5M · שווי ≥ $300M (מוציא nano/micro).
 - סף צניחה: ≥10% מהפתיחה (grid M4: 7/10/15) · סף gradual: ≥10% ב-5 ימי-מסחר.
-- **מדדי-איסוף תיאוריים (M3.6 — פיצ'רים, לא אותות-כניסה; הכרעה ל-M4):** (א) *recovery-from-trough* ב-post_analysis (`trough_price/trough_day/recovery_from_trough_pct/max_recovery_from_trough_pct`) — היפוך מהשפל. (ב) *prior-decline context* ב-watchlist (`pct_from_52w_high/pct_from_52w_low/prior_decline_20d_pct/prior_decline_60d_pct`) — מחושב ב-`scanner.prior_context` (helper משותף) מחלון `EOD_HISTORY_DAYS=400` (אותה קריאה, ללא רשת נוספת). נאספים ב-scanner+gradual בלבד → שורות intraday-live (source=intraday) לא נושאות prior-decline.
+- **מדדי-איסוף תיאוריים (פיצ'רים, לא אותות-כניסה; הכרעה ל-M4):**
+  - (M3.6) *recovery-from-trough* ב-post_analysis (`trough_price/trough_day/recovery_from_trough_pct/max_recovery_from_trough_pct`) — היפוך מהשפל.
+  - (M3.6) *prior-decline context* ב-watchlist (`pct_from_52w_high/pct_from_52w_low/prior_decline_20d_pct/prior_decline_60d_pct`) — `scanner.prior_context` מחלון `EOD_HISTORY_DAYS=400` (אותה קריאה).
+  - (M3.7) *סממני-הקשר מבוססי-מחקר*: `vix_level` (^VIX close, Nagel; פעם-לריצה `sc.vix_close`), `drop_day_rel_volume` (volume/avg_20, capitulation; == volume_ratio ב-EOD), `sector_momentum_5d/20d` (תשואת sector-ETF; `sc.etf_momentum` cache פר-ריצה, פר-ETF לא פר-מניה).
+  - **כיסוי:** prior-decline מתמלא גם לשורות source=intraday דרך `scanner.backfill_intraday_prior_context` (ריצת-EOD, אותו scan_date). 3 סממני-M3.7 עדיין ריקים ל-intraday-live (נאספים ב-scanner+gradual; להרחבה עתידית).
 - חלון תוצאות: D1..D+20 (+ תת-חלונות 3/5/10/20).
 - עלות-סטרס M4: 0.50% round-trip.
 
