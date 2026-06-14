@@ -39,6 +39,66 @@ POST_ANALYSIS_HORIZON = 5            # collect D1..D+N
 TOUCH_UP_PCT = 5.0                   # "did it touch +X% from scan close"
 TOUCH_DOWN_PCT = 8.0                 # "did it touch -Y% from scan close"
 
+# ── Fundamentals snapshot (Finviz quote ticker_fundament) ────────────────────
+# Frozen field list (the 90 Finviz fields minus the junk 'Trades'). Captured
+# point-in-time per candidate — some fields (Short Float, Inst Own, Recom,
+# Perf*) are NOT reconstructable later.
+FINVIZ_FUNDAMENT_FIELDS = [
+    "Company", "Sector", "Industry", "Country", "Exchange", "Index",
+    "P/E", "EPS (ttm)", "Insider Own", "Shs Outstand", "Perf Week", "Market Cap",
+    "Forward P/E", "EPS next Y", "Insider Trans", "Shs Float", "Perf Month",
+    "Enterprise Value", "PEG", "EPS next Q", "Inst Own", "Short Float",
+    "Perf Quarter", "Income", "P/S", "EPS this Y", "Inst Trans", "Short Ratio",
+    "Perf Half Y", "Sales", "P/B", "EPS next Y Percentage", "ROA",
+    "Short Interest", "Perf YTD", "Book/sh", "P/C", "EPS next 5Y", "ROE",
+    "52W High", "Perf Year", "Cash/sh", "P/FCF", "EPS past 3/5Y", "ROIC",
+    "52W Low", "Perf 3Y", "Dividend Est.", "EV/EBITDA", "Sales past 3/5Y",
+    "Gross Margin", "Volatility W", "Volatility M", "Perf 5Y", "Dividend TTM",
+    "EV/Sales", "EPS Y/Y TTM", "Oper. Margin", "ATR (14)", "Perf 10Y",
+    "Dividend Ex-Date", "Quick Ratio", "Sales Y/Y TTM", "Profit Margin",
+    "RSI (14)", "Recom", "Dividend Gr. 3/5Y", "Current Ratio", "EPS Q/Q",
+    "SMA20", "Beta", "Target Price", "Payout", "Debt/Eq", "Sales Q/Q", "SMA50",
+    "Rel Volume", "Prev Close", "Employees", "LT Debt/Eq", "Earnings", "SMA200",
+    "Avg Volume", "Price", "IPO", "Option/Short", "EPS/Sales Surpr.", "Volume",
+    "Change",
+]
+
+# Field tiers for M4 (documentation only — NO scoring here).
+FUND_PRIMARY = [   # hypothesised candidate predictors
+    "RSI (14)", "ATR (14)", "Beta", "Volatility W", "Volatility M",
+    "52W High", "52W Low", "Rel Volume", "Avg Volume",
+    "Short Float", "Short Ratio", "Short Interest",
+    "Profit Margin", "Oper. Margin", "Gross Margin", "ROE", "ROA", "ROIC",
+    "EPS this Y", "EPS next Y", "EPS next 5Y", "EPS Q/Q", "EPS Y/Y TTM",
+    "EPS past 3/5Y", "Perf Week", "Perf Month", "Perf Quarter", "Perf Half Y",
+    "Perf Year", "Inst Own", "Insider Own", "Recom",
+]
+FUND_PERIPHERAL = [   # exploratory / wide net
+    "P/E", "Forward P/E", "PEG", "P/S", "P/B", "P/FCF", "EV/EBITDA", "EV/Sales",
+    "Sales past 3/5Y", "Sales Y/Y TTM", "Sales Q/Q", "Dividend TTM",
+    "Dividend Est.", "Shs Outstand", "Shs Float", "Income", "Sales",
+    "Book/sh", "Cash/sh",
+]
+# Single-value numeric fields to parse into a clean *_num column (raw kept too).
+# Compound fields (52W High/Low, EPS/Sales past 3-5Y, Option/Short, EPS/Sales
+# Surpr., Dividend Gr.) are kept RAW only; 52W distance handled specially.
+FUND_NUMERIC = [
+    "P/E", "EPS (ttm)", "Insider Own", "Shs Outstand", "Perf Week", "Market Cap",
+    "Forward P/E", "EPS next Y", "Insider Trans", "Shs Float", "Perf Month",
+    "Enterprise Value", "PEG", "EPS next Q", "Inst Own", "Short Float",
+    "Perf Quarter", "Income", "P/S", "EPS this Y", "Inst Trans", "Short Ratio",
+    "Perf Half Y", "Sales", "P/B", "EPS next Y Percentage", "ROA",
+    "Short Interest", "Perf YTD", "Book/sh", "P/C", "EPS next 5Y", "ROE",
+    "Perf Year", "Cash/sh", "P/FCF", "ROIC", "Perf 3Y", "Gross Margin",
+    "Volatility W", "Volatility M", "Perf 5Y", "Dividend TTM", "EV/Sales",
+    "EPS Y/Y TTM", "Oper. Margin", "ATR (14)", "Quick Ratio", "Sales Y/Y TTM",
+    "Profit Margin", "RSI (14)", "Recom", "Current Ratio", "EPS Q/Q", "SMA20",
+    "Beta", "Target Price", "Payout", "Debt/Eq", "Sales Q/Q", "SMA50",
+    "Rel Volume", "Prev Close", "Employees", "LT Debt/Eq", "Avg Volume",
+    "Price", "Change",
+]
+TAB_FUNDAMENTALS = "fundamentals_snapshot"
+
 # ── Storage ──────────────────────────────────────────────────────────────────
 # SA cannot create sheets (Drive quota). User creates + shares the sheet with the
 # service account, then sets the ID here or via env REBOUND_SHEET_ID.

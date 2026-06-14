@@ -280,6 +280,16 @@ def main():
     import sheets_manager as sm
     surv, new = sm.upsert_rows(config.SHEET_ID, config.TAB_WATCHLIST, HEADER, to_matrix(rows))
     log.info("Wrote watchlist_live: %d new rows (kept %d historical).", new, surv)
+
+    # point-in-time fundamentals snapshot for the same candidates (collection only)
+    if rows:
+        try:
+            import fundamentals as fund
+            frows = fund.collect([(r["scan_date"], r["ticker"]) for r in rows])
+            fs, fn = fund.write(frows)
+            log.info("Wrote fundamentals_snapshot: %d new rows (kept %d).", fn, fs)
+        except Exception as e:
+            log.error("fundamentals snapshot failed (watchlist still written): %s", e)
     return rows
 
 
