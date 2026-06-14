@@ -1,7 +1,10 @@
 # ReboundPro — Project Knowledge Base
 
-*קובץ זה ימולא כ-PK חי במתכונת RidingHigh. מחזיק עקרונות + חוקי-עבודה.*
-*מקור אמת לתכנון: `docs/ReboundPro_BuildSpec_v0.1.md`. מסמך-אב: `~/Downloads/ReboundPro_MasterPlan_2026-06-13_v0.1.md`.*
+> **🔁 ריטואל סשן ReboundPro (חובה):**
+> **תחילת כל סשן** — קרא: `docs/MASTERPLAN.md` (אסטרטגיה — יציב), `docs/PROJECT_KNOWLEDGE.md` (זיכרון תפעולי), `docs/TASKS.md` (משימות), וזנב `docs/ACTIONS_LOG.md` (פעולות אחרונות).
+> **סוף כל סשן** — הוסף ערך ל-`ACTIONS_LOG.md`, עדכן `TASKS.md`, ועדכן `PROJECT_KNOWLEDGE.md` אם השתנו עובדות תפעוליות.
+
+*מקור-אמת לאסטרטגיה: `docs/MASTERPLAN.md`. זיכרון תפעולי: `docs/PROJECT_KNOWLEDGE.md`. (build spec מוקדם: `docs/ReboundPro_BuildSpec_v0.1.md`.)*
 
 ## מה זה
 מערכת מחקר long לתפיסת התאוששות של מניות NASDAQ+NYSE שצנחו ≥10% ביום. סימולציה בלבד. ההפך הסימטרי של RidingHigh Pro.
