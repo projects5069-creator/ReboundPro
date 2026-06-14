@@ -28,7 +28,9 @@
 | `gradual_scanner.py` | M3 סורק-EOD **השערה נפרדת** (`gradual_drop`): close היום ≥10% מתחת ל-close לפני 5 ימי-מסחר (מסנן Finviz `Performance: Week -10%` + אימות yfinance); אותה רצפת-נזילות; מתייג `drop_kind="gradual_drop"`, `source="gradual_eod"`; דדופ חוצה-סוגים 20 ימי-מסחר (`recent_capture_set`); משתמש ב-helpers של `scanner.py` ללא נגיעה בו; קורא fundamentals inline. **value-trap: פונדמנטלי=פיצ'ר לא פילטר; אפס החלטת-כניסה; הכרעה ל-M4.** post_analysis/intraday_timeseries/catalyst קולטים את השורות אוטומטית |
 | `sheets_manager.py` | I/O ל-Sheets; `upsert_by_key` (merge לפי שם-עמודה, migration-safe); creds: file→st.secrets→env |
 | `config.py` | מקור-אמת לפרמטרים/טאבים/סכמות (כולל `TIMESERIES_HEADER`, `TS_TIER1_MAX_DAY=3`, `TS_TIER2_MAX_DAY=20`) |
-| `dashboard.py` | Streamlit, תצוגה בלבד (Health/Watchlist/**Stock Card**/Post/Stats); helper `styled()` לעיצוב (`%` בתא/פסיקים/2-ספרות) |
+| `dashboard.py` | Streamlit **multipage** entrypoint = דף-בית (פילוח+totals לפי drop_kind). תצוגה בלבד |
+| `dashboard_common.py` | **כל הלוגיקה המשותפת** של ה-dashboard (load/styled/FUND_GROUPS/column-sets/coalesce_kind/restrict + 5 פונקציות-טאב + `render(drop_kind,…)`); מיובא ע"י entrypoint ושני הדפים — אפס כפילות |
+| `pages/1_Intraday_Drop.py` · `pages/2_Gradual_Drop.py` | דפי-השערה דקים: כל אחד קורא `render(drop_kind)` → 5 טאבים מסונן מראש לאותה השערה (אין multiselect drop_kind). Intraday=drop_pct_from_open+מסלול; Gradual=drop_pct_window+lookback+ref_close_window |
 
 ## תזמון
 - `daily.yml` — EOD `30 22 * * 1-5` UTC: scanner → **gradual_scanner** → catalyst → post_analysis. (gradual רץ אחרי scanner כדי שדדופ אותו-יום יעבוד, ולפני catalyst/post כדי שחדשות+forward יקלטו את שורות gradual.)
@@ -36,8 +38,10 @@
 
 ## Dashboard
 Streamlit Cloud, נפרס מ-`dashboard.py` (branch `main`). Cloud מתקין מ-`uv.lock`. *(URL: למלא לאחר אישור הפריסה ב-share.streamlit.io עבור `projects5069-creator/ReboundPro`.)*
-- **5 לשוניות:** Collection Health · Watchlist · **Stock Card** (כרטיס-מניה: גרף intraday_timeseries + post_analysis + תעודת-זהות פונדמנטלית בסגנון Finviz + חדשות) · Post-Analysis · Descriptive Stats. הכל view-only.
-- **תיקוני-תצוגה (M3):** helper `styled()` (pandas Styler) — `%` בתא, פסיקי-אלפים, עיגול 2-ספרות; שדות-המסלול התוך-יומי חשופים בטבלת ה-watchlist.
+- **Multipage (M3.5):** entrypoint `dashboard.py` = דף-בית; שני דפי-השערה ב-`pages/` (ניווט sidebar אוטומטי) — **⚡ Intraday Drop** ו-**🐢 Gradual Drop**. כל דף מציג את הסט המלא של 5 הלשוניות **מסונן מראש ל-drop_kind אחד** (הדף עצמו הוא הפילטר; אין multiselect של drop_kind). post/ts/fund/news מוגבלים למפתחות (scan_date,ticker) של אותו דף.
+- **5 לשוניות (בכל דף):** Collection Health · Watchlist · Stock Card (intraday_timeseries + post_analysis + תעודת-זהות Finviz + חדשות) · Post-Analysis · Descriptive Stats. הכל view-only.
+- **תיקוני-תצוגה:** helper `styled()` (pandas Styler) — `%` בתא, פסיקי-אלפים, עיגול 2-ספרות. תשתית-איסוף משותפת (אותו Sheet, אותם collectors) — רק התצוגה מפוצלת.
+- **Streamlit Cloud:** entrypoint נשאר `dashboard.py`; תיקיית `pages/` לידו מתגלה אוטומטית; creds/SHEET_ID מ-`st.secrets`. אם Cloud מגיש cache ישן — Manage app → Reboot.
 
 ## המספרים המרכזיים
 - **שתי השערות נאספות בנפרד** (עמודה `drop_kind` ב-watchlist_live): `intraday_drop` (צניחה חדה תוך-יומית, scanner+intraday_scanner) ו-`gradual_drop` (ירידה הדרגתית ≥10% ב-5 ימי-מסחר, gradual_scanner). `source` נשאר provenance (eod_close/intraday/gradual_eod). דדופ חוצה-סוגים: 20 ימי-מסחר. שורות legacy ללא drop_kind נחשבות intraday_drop בדashboard.
