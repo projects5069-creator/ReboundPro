@@ -1,0 +1,85 @@
+name: ReboundPro Health Monitor
+
+# Operational pipeline-health checks (health_monitor.py). READ-ONLY against the
+# Sheet except the single health_log control tab. 3 runs per weekday (UTC; fixed
+# year-round like daily.yml — ET shifts with DST):
+#   13:00 UTC  pre-open   (~08:00 EST / 09:00 EDT)  --morning  "ready for the day?"
+#   17:00 UTC  mid-session(~12:00 EST / 13:00 EDT)  --morning  "freshness mid-day"
+#   23:30 UTC  post-close (~18:30 EST / 19:30 EDT)  --evening  "today's intake landed?"
+#              (~1h after daily.yml at 22:30 UTC, so EOD collection is in)
+# Exit policy: only exit=2 (failure) fails the run (→ GitHub alert email); exit=1
+# (warning) is logged but the run stays green, so legacy warnings don't email 3x/day.
+on:
+  schedule:
+    - cron: "0 13 * * 1-5"
+    - cron: "0 17 * * 1-5"
+    - cron: "30 23 * * 1-5"
+  workflow_dispatch:
+    inputs:
+      mode:
+        description: "monitor mode (manual runs)"
+        type: choice
+        options: [morning, evening]
+        default: morning
+
+concurrency:
+  group: reboundpro-health
+  cancel-in-progress: true
+
+jobs:
+  health:
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+
+      - name: Install dependencies
+        run: |
+          python -m pip install --upgrade pip
+          pip install finvizfinance yfinance gspread google-auth pandas numpy pytz exchange_calendars requests
+
+      - name: Restore service-account credentials from secret
+        env:
+          GOOGLE_CREDENTIALS_JSON: ${{ secrets.GOOGLE_CREDENTIALS_JSON }}
+        run: printf '%s' "$GOOGLE_CREDENTIALS_JSON" > google_credentials.json
+
+      - name: Select mode by schedule
+        id: mode
+        run: |
+          case "${{ github.event.schedule }}" in
+            "30 23 * * 1-5") flag="--evening" ;;
+            "0 13 * * 1-5"|"0 17 * * 1-5") flag="--morning" ;;
+            *) flag="--${{ github.event.inputs.mode || 'morning' }}" ;;   # workflow_dispatch
+          esac
+          echo "flag=$flag" >> "$GITHUB_OUTPUT"
+          echo "Selected health-monitor mode: $flag"
+
+      - name: Run health monitor
+        env:
+          REBOUND_SHEET_ID: ${{ secrets.REBOUND_SHEET_ID }}
+        run: |
+          set +e
+          python health_monitor.py ${{ steps.mode.outputs.flag }} | tee /tmp/health.txt
+          code=${PIPESTATUS[0]}
+          set -e
+          {
+            echo "### 🩺 Health monitor \`${{ steps.mode.outputs.flag }}\` — exit=$code"
+            echo ""
+            echo '```'
+            cat /tmp/health.txt
+            echo '```'
+          } >> "$GITHUB_STEP_SUMMARY"
+          if [ "$code" -eq 2 ]; then
+            echo "exit=2 (failure) → failing the run to trigger an alert."
+            exit 1
+          fi
+          echo "exit=$code (<=1) → run stays green (warnings are logged, not alerted)."
+          exit 0
+
+      - name: Remove credentials
+        if: always()
+        run: rm -f google_credentials.json

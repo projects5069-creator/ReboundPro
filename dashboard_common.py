@@ -297,8 +297,10 @@ def _stock_card(watch, post, ts, fund, news):
         r0 = wr.iloc[0]
         kind = r0.get("drop_kind") or "intraday_drop"
         if kind == "gradual_drop":
-            lb = r0.get("lookback_trading_days")
-            lb = int(lb) if pd.notna(lb) else config.GRADUAL_LOOKBACK_DAYS
+            try:                                  # tolerate blank/"" / non-numeric
+                lb = int(float(r0.get("lookback_trading_days")))
+            except (TypeError, ValueError):
+                lb = config.GRADUAL_LOOKBACK_DAYS
             drop_label, drop_val = f"drop {lb}d (הדרגתי)", r0.get("drop_pct_window")
         else:
             drop_label, drop_val = "drop מהפתיחה", r0.get("drop_pct_from_open")
@@ -570,8 +572,13 @@ def _health_age(run_at):
         return str(run_at), False
 
 
-def render_health_banner(sheet_id):
-    """Top-of-home status banner from the latest health_log run."""
+def render_health_banner(sheet_id=None):
+    """Top-of-home status banner from the latest health_log run. Resolves the
+    sheet id internally (same mechanism as render()) when not supplied."""
+    if sheet_id is None:
+        sheet_id = resolve_sheet_id()
+    if not sheet_id:
+        return
     df = load_health(sheet_id)
     if df.empty or "run_at" not in df.columns:
         st.info("🩺 בקרה טרם רצה (אין health_log). הרץ `health_monitor.py --morning`.")
@@ -595,10 +602,13 @@ def render_health_banner(sheet_id):
         st.info(base)
 
 
-def render_system_health(sheet_id):
+def render_system_health(sheet_id=None):
     """Full System Health page: latest status + trend + filterable run history.
+    Resolves the sheet id internally (same mechanism as render()) when not supplied.
     Operational control only — what the monitor checked and when. NOT data-quality
     analysis of the collected data, and NOT edge."""
+    if sheet_id is None:
+        sheet_id = resolve_sheet_id()
     st.title("🩺 System Health — היסטוריית בקרה")
     st.caption("בקרה תפעולית בלבד — האם המערכת רצה / עובדת / מתועדת. "
                "לא ניתוח-איכות של הנתונים עצמם, ולא edge (זה M4).")

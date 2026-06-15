@@ -34,6 +34,18 @@ uv run ... python health_monitor.py
 
 ה-exit-code = החומרה המקסימלית מבין כל הבדיקות.
 
+## אוטומציה — `.github/workflows/health.yml` (3 ריצות/יום-חול)
+| cron (UTC) | ET (EDT/EST) | flag | מטרה |
+|------------|--------------|------|------|
+| `0 13 * * 1-5` | 09:00 / 08:00 | `--morning` | לפני הפתיחה — "המערכת מוכנה ליום?" |
+| `0 17 * * 1-5` | 13:00 / 12:00 | `--morning` | אמצע-מסחר — טריות/תקלות-intraday חיות |
+| `30 23 * * 1-5` | 19:30 / 18:30 | `--evening` | אחרי הסגירה (~שעה אחרי daily.yml) — "האיסוף נכנס תקין?" |
+- ה-flag נבחר אוטומטית לפי `github.event.schedule`. (אמצע-היום משתמש ב-`--morning` — הבדיקות זהות בכל המצבים; ה-mode משנה רק את הכותרת/תקציר, ו-`--evening` מוסיף פילוח-איסוף.)
+- **מדיניות exit:** רק `exit=2` (תקלה) מכשיל את ה-run ושולח מייל-התראה מ-GitHub; `exit=1` (אזהרה) נרשם ל-`GITHUB_STEP_SUMMARY` אבל ה-run נשאר ירוק (כדי שאזהרות-legacy לא ישלחו מייל 3×/יום).
+- הדוח המלא נכתב ל-**Actions → Summary** של כל ריצה.
+- **הפעלה ידנית:** GitHub → Actions → *ReboundPro Health Monitor* → **Run workflow** → בחר `mode` (morning/evening) → Run. (`workflow_dispatch` — לבדיקה ראשונה בלי לחכות ל-cron.)
+- אותם secrets/deps כמו `daily.yml`; לא נוגע ב-daily/intraday.
+
 ## 10 הבדיקות (5 עמודי-ניטור)
 
 ### עמוד טריות (Freshness)

@@ -15,8 +15,8 @@ totals, then "pick a page in the sidebar".
 Run locally:  streamlit run dashboard.py
 Streamlit Cloud entrypoint stays dashboard.py; pages/ is auto-discovered.
 """
-# Streamlit Cloud redeploy marker — 2026-06-14 (M3-monitor System Health page +
-# home banner). Bump to force a clean reboot if Cloud serves stale cached modules.
+# Streamlit Cloud redeploy marker — 2026-06-14b (fix: pages/3 stale-module crash —
+# helpers now resolve sheet_id internally; force a clean reboot to drop cached modules).
 import plotly.express as px
 import streamlit as st
 
@@ -36,7 +36,7 @@ if not sheet_id:
 common.sidebar_controls(sheet_id)
 
 # operational status banner (latest health_monitor run) — control, not edge
-common.render_health_banner(sheet_id)
+common.render_health_banner()
 
 try:
     watch = common.load(sheet_id, config.TAB_WATCHLIST, common.NUM_WATCH)

@@ -9,4 +9,6 @@ dashboard_common.
 import dashboard_common as common
 
 common.setup_page("System Health — ReboundPro", "🩺")
-common.render_system_health(common.resolve_sheet_id())
+# same mechanism as pages/1 & 2 (common.render(...)): the helper resolves the
+# sheet id internally — the page passes no sheet_id.
+common.render_system_health()
