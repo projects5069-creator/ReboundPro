@@ -358,28 +358,37 @@ def _watchlist(watch, drop_kind, days):
     if sel_sector:
         view = view[view["sector"].isin(sel_sector)]
 
-    base = ["scan_date", "ticker", "drop_kind", "exchange"]
-    mid = ["price", "liquidity_bucket", "sector", "market_regime", "drop_type",
-           "adv_dollar", "market_cap", "rsi_14"]
-    # context signals (descriptive) — shown for both hypotheses
-    context = ["pct_from_52w_high", "pct_from_52w_low",
-               "prior_decline_20d_pct", "prior_decline_60d_pct",
-               "vix_level", "drop_day_rel_volume",
-               "sector_momentum_5d", "sector_momentum_20d"]
-    if drop_kind == "gradual_drop":
-        dropcol = ["drop_pct_window"]
-        extra = ["lookback_trading_days", "ref_close_window", "source"]
-        sortcol = "drop_pct_window"
-    else:   # intraday_drop (default)
-        dropcol = ["drop_pct_from_open"]
-        extra = ["source", "first_cross_at", "first_cross_price", "first_cross_drop_pct",
-                 "intraday_low", "intraday_low_at", "recovery_from_low_pct",
-                 "reversal_confirmed", "scans_count", "last_update_at"]
-        sortcol = "drop_pct_from_open"
-    cols = [c for c in base + dropcol + mid + context + extra if c in view.columns]
+    # Too many columns for one readable table → split into vertical THEME groups
+    # (~10-12 cols each). `ticker` is the anchor at the head of every group, and the
+    # view is sorted ONCE below so rows line up across the three tables (row N is the
+    # same event everywhere). Every displayed column belongs to exactly one group;
+    # drop_kind-specific columns simply filter out when absent (no column dropped).
+    GROUPS = [
+        ("🪪 זיהוי + צניחה",
+         ["ticker", "scan_date", "exchange", "drop_kind",
+          "drop_pct_from_open", "drop_pct_window", "price", "liquidity_bucket",
+          "sector", "market_regime", "market_cap", "adv_dollar", "drop_type"]),
+        ("📐 הקשר + מומנטום (תיאורי — לא אות-כניסה)",
+         ["ticker", "rsi_14", "pct_from_52w_high", "pct_from_52w_low",
+          "prior_decline_20d_pct", "prior_decline_60d_pct", "vix_level",
+          "drop_day_rel_volume", "sector_momentum_5d", "sector_momentum_20d"]),
+        ("⏱️ מסלול תוך-יומי + מקור",
+         ["ticker", "source", "first_cross_at", "first_cross_price",
+          "first_cross_drop_pct", "intraday_low", "intraday_low_at",
+          "recovery_from_low_pct", "reversal_confirmed", "scans_count",
+          "last_update_at", "lookback_trading_days", "ref_close_window"]),
+    ]
+    sortcol = "drop_pct_window" if drop_kind == "gradual_drop" else "drop_pct_from_open"
     sortcol = sortcol if sortcol in view.columns else "scan_date"
-    st.caption(f"{len(view)} שורות")
-    show_table(view[cols].sort_values(sortcol), height=520)
+    view = view.sort_values(sortcol)            # sort once → rows align across groups
+    st.caption(f"{len(view)} שורות · מאורגן ל-טבלאות-נושא (ticker עוגן בכל אחת; "
+               "אפס עמודה הושמטה)")
+    for title, group_cols in GROUPS:
+        present = [c for c in group_cols if c in view.columns]
+        if len(present) <= 1:                   # nothing beyond the ticker anchor → skip
+            continue
+        st.markdown(f"**{title}**")
+        show_table(view[present], height=420)
 
 
 def _stock_card(watch, post, ts, fund, news):

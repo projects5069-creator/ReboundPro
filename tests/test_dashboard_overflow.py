@@ -146,3 +146,39 @@ def test_long_header_shortened_and_columns_preserved():
     assert "drop%open" in md, "header shortening (SHORT_LABELS) not applied"
     # no column removed: the watchlist still surfaces e.g. liquidity short label
     assert "liq" in md
+
+
+# Every column that was displayed in the single wide watchlist table must still
+# appear after the theme-group split — split must reorganize, never drop.
+_INTRADAY_COLS = [
+    "scan_date", "ticker", "drop_kind", "exchange", "drop_pct_from_open", "price",
+    "liquidity_bucket", "sector", "market_regime", "drop_type", "adv_dollar",
+    "market_cap", "rsi_14", "pct_from_52w_high", "pct_from_52w_low",
+    "prior_decline_20d_pct", "prior_decline_60d_pct", "vix_level",
+    "drop_day_rel_volume", "sector_momentum_5d", "sector_momentum_20d", "source",
+    "first_cross_at", "first_cross_price", "first_cross_drop_pct", "intraday_low",
+    "intraday_low_at", "recovery_from_low_pct", "reversal_confirmed", "scans_count",
+    "last_update_at",
+]
+_GRADUAL_COLS = [
+    "scan_date", "ticker", "drop_kind", "exchange", "drop_pct_window", "price",
+    "liquidity_bucket", "sector", "market_regime", "drop_type", "adv_dollar",
+    "market_cap", "rsi_14", "pct_from_52w_high", "pct_from_52w_low",
+    "prior_decline_20d_pct", "prior_decline_60d_pct", "vix_level",
+    "drop_day_rel_volume", "sector_momentum_5d", "sector_momentum_20d",
+    "source", "lookback_trading_days", "ref_close_window",
+]
+
+
+@pytest.mark.parametrize("page,cols", [
+    ("pages/1_Intraday_Drop.py", _INTRADAY_COLS),
+    ("pages/2_Gradual_Drop.py", _GRADUAL_COLS),
+])
+def test_watchlist_split_drops_no_column(page, cols):
+    at = AppTest.from_file(page).run(timeout=30)
+    md = _all_markdown(at)
+    # all three theme-group headers rendered
+    assert "זיהוי" in md and "מומנטום" in md and "מסלול" in md, f"{page}: a theme group is missing"
+    # every displayed column present (by its short label or raw header)
+    missing = [c for c in cols if common.SHORT_LABELS.get(c, c) not in md]
+    assert not missing, f"{page}: columns dropped by the split: {missing}"
