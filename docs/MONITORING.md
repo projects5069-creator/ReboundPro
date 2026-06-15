@@ -5,8 +5,10 @@
 > בהתפלגות-ה-recovery. הצצה בהתפלגות-התוצאות = הצצת-edge אסורה; ה-edge מוכרע ב-M4
 > בלבד (MASTERPLAN §5). כאן — קלטים תפעוליים בלבד.
 >
-> **READ-ONLY** מול ה-Google Sheet (רק `sheets_manager.read_rows`). הקובץ היחיד
-> שנכתב הוא `health_log.jsonl` מקומי (append, לעקיבת-מגמות; ב-.gitignore).
+> **כמעט-READ-ONLY** מול ה-Google Sheet: כל טאבי-המחקר נקראים בלבד (`read_rows`).
+> הטאב היחיד שהמוניטור **כותב** אליו הוא `health_log` — טאב-**בקרה** (לא נתוני-מחקר):
+> שורה אחת לכל ריצה. בנוסף נכתב `health_log.jsonl` מקומי (append; ב-.gitignore).
+> אם אין creds/Sheet — הכתיבה ל-Sheet מדלגת בשקט; ה-jsonl תמיד נכתב; הריצה לא נשברת.
 
 ## הרצה
 ```bash
@@ -63,8 +65,15 @@ uv run ... python health_monitor.py
 - **field-completeness ⚠️** — שדות-הקשר ריקים. לשורות ישנות: `python scanner.py --backfill-context`. לחדשות: ודא ש-scanner/gradual כותבים את השדות.
 - **duplicates ❌** — מפתח כפול ב-watchlist. חריג (ה-upsert אמור למנוע) — בדיקה ידנית של ה-Sheet.
 
-## health_log.jsonl
-כל הרצה מוסיפה שורת-JSON: `{ts, mode, expected_last_scan, overall, checks:[{id,status}]}` — לעקיבת-מגמות לאורך זמן (למשל עלייה ב-contamination% או הישנות אזהרה).
+## health_log (טאב-בקרה ב-Sheet) + health_log.jsonl (מקומי)
+- **טאב `health_log` ב-Sheet** (`config.HEALTH_LOG_HEADER`): שורה לכל ריצה — `run_at, mode, overall_status (healthy/warning/error), exit_code`, עמודה לכל אחת מ-10 הבדיקות עם ה-severity שלה (ok/warn/fail), ו-`summary_text`. key=`run_at` (append). זהו **הטאב היחיד שהמוניטור כותב** — שאר הטאבים read-only מהמוניטור.
+- **`health_log.jsonl` מקומי**: `{ts, mode, expected_last_scan, overall, checks:[{id,status}]}` לכל ריצה (עקיבת-מגמות מקומית).
+
+## דף System Health בדashboard (`pages/3_System_Health.py`)
+קורא את טאב `health_log` ומציג (view-only, דרך `dashboard_common`):
+- **באנר-סטטוס בעמוד-הבית** (`dashboard.py`): הריצה האחרונה — ✅/⚠️/❌, "בדיקה אחרונה לפני X", קישור-טקסט לדף. אם הבדיקה האחרונה >24ש' → דגל "הבקרה לא רצה לאחרונה" (בקרה-שלא-רצה = בעיה). אם אין health_log → "בקרה טרם רצה".
+- **דף מלא:** מטריקות-על (סטטוס/exit/גיל/סה"כ ריצות) · גרף-מגמת `overall_status` לאורך זמן · טבלת-ריצות (חדש למעלה) עם סינון לפי mode ו-status.
+- **בקרה תפעולית בלבד** — מציג מה הסוכן בדק ומתי, לא ניתוח-איכות-של-הנתונים ולא edge.
 
 ## גבול קשיח
 בקרה בלבד. **אין ניקוד / פירוש-תוצאות / המלצה / הצצת-edge.** ה-edge מוכרע ב-M4.

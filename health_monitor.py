@@ -43,6 +43,8 @@ import catalyst as cat
 ET = pytz.timezone("America/New_York")
 OK, WARN, FAIL = 0, 1, 2
 EMOJI = {OK: "✅", WARN: "⚠️", FAIL: "❌"}
+STATUS_WORD = {OK: "ok", WARN: "warn", FAIL: "fail"}
+OVERALL_WORD = {OK: "healthy", WARN: "warning", FAIL: "error"}
 LOG_PATH = os.path.join(os.path.dirname(__file__), "health_log.jsonl")
 
 # field-completeness alert threshold: % of rows with a blank context field
@@ -314,6 +316,14 @@ def intake_summary(data, exp_last_s):
 
 
 # ── reporting ────────────────────────────────────────────────────────────────
+def verdict_text(m):
+    n_fail = sum(1 for f in m.findings if f["status"] == FAIL)
+    n_warn = sum(1 for f in m.findings if f["status"] == WARN)
+    n_ok = len(m.findings) - n_fail - n_warn
+    verdict = {OK: "בריא ✅", WARN: "אזהרות ⚠️", FAIL: "תקלה ❌"}[m.overall()]
+    return f"{verdict} · ❌{n_fail} ⚠️{n_warn} ✅{n_ok}"
+
+
 def report(m, mode, exp_last_s, data):
     title = {"morning": "🌅 בוקר — המערכת חיה ומוכנה ליום?",
              "evening": "🌆 ערב — האיסוף של היום נכנס תקין?",
@@ -325,13 +335,8 @@ def report(m, mode, exp_last_s, data):
     if mode == "evening":
         print("-" * 64)
         print("📥 מה נאסף: " + intake_summary(data, exp_last_s))
-    n_fail = sum(1 for f in m.findings if f["status"] == FAIL)
-    n_warn = sum(1 for f in m.findings if f["status"] == WARN)
-    overall = m.overall()
     print("=" * 64)
-    verdict = {OK: "בריא ✅", WARN: "אזהרות ⚠️", FAIL: "תקלה ❌"}[overall]
-    print(f"סיכום: {verdict} · ❌{n_fail} ⚠️{n_warn} ✅{len(m.findings) - n_fail - n_warn} "
-          f"· exit={overall}")
+    print(f"סיכום: {verdict_text(m)} · exit={m.overall()}")
 
 
 def write_log(m, mode, exp_last_s, now):
@@ -342,7 +347,25 @@ def write_log(m, mode, exp_last_s, now):
         with open(LOG_PATH, "a") as fh:
             fh.write(json.dumps(rec, ensure_ascii=False) + "\n")
     except Exception as e:
-        print(f"(warn: health_log write failed: {e})")
+        print(f"(warn: health_log.jsonl write failed: {e})")
+
+
+def write_sheet_log(m, mode, exp_last_s, now):
+    """Append one control row to the health_log tab — the ONLY tab the monitor
+    writes. Skips silently if no Sheet/creds (the local jsonl is always written);
+    never breaks the run."""
+    if not config.SHEET_ID:
+        return
+    row = {"run_at": now.strftime("%Y-%m-%d %H:%M:%S %Z"), "mode": mode,
+           "overall_status": OVERALL_WORD[m.overall()], "exit_code": m.overall(),
+           "summary_text": verdict_text(m)}
+    for f in m.findings:
+        row[f["id"]] = STATUS_WORD[f["status"]]
+    try:
+        sm.upsert_by_key(config.SHEET_ID, config.TAB_HEALTH_LOG,
+                         config.HEALTH_LOG_HEADER, [row], ["run_at"])
+    except Exception as e:
+        print(f"(warn: health_log Sheet write skipped: {e})")
 
 
 def main():
@@ -363,7 +386,8 @@ def main():
 
     m, exp_last_s = run_checks(data, now, cal)
     report(m, mode, exp_last_s, data)
-    write_log(m, mode, exp_last_s, now)
+    write_log(m, mode, exp_last_s, now)        # local jsonl (always)
+    write_sheet_log(m, mode, exp_last_s, now)  # health_log tab (only tab written)
     sys.exit(m.overall())
 
 

@@ -10,7 +10,7 @@
 - **Repo:** `projects5069-creator/ReboundPro` (פרטי).
 - **Google Sheet:** `ReboundPro-Data` · ID `17HnxKlpFMrUGd1Hemg4s-_XipSRSqkIVIJdzkvjn_f4` · owner `projects5069@gmail.com`.
 - **Service account:** `ridinghigh-sheets-v2@ridinghigh-pro-v2.iam.gserviceaccount.com` (Editor על ה-Sheet). ה-SA **לא** יכול ליצור Sheets (Drive quota) — ה-Sheet נוצר ידנית ושותף.
-- **6 טאבי-דאטה:** `watchlist_live` · `daily_summary` · `fundamentals_snapshot` · `news_snapshot` · `post_analysis` · `intraday_timeseries` (M3). (`Sheet1` = ברירת-מחדל ריקה.)
+- **6 טאבי-דאטה:** `watchlist_live` · `daily_summary` · `fundamentals_snapshot` · `news_snapshot` · `post_analysis` · `intraday_timeseries` (M3). (`Sheet1` = ברירת-מחדל ריקה.) + **טאב-בקרה** `health_log` (M3-monitor — פלט הסוכן, לא נתוני-מחקר).
 
 ## Secrets (GitHub Actions — שמות בלבד)
 `GOOGLE_CREDENTIALS_JSON` · `APCA_API_KEY_ID` · `APCA_API_SECRET_KEY` · `REBOUND_SHEET_ID` · `FINNHUB_API_KEY`.
@@ -25,7 +25,8 @@
 | `catalyst.py` | Finnhub news D-3..D + earnings-flag → `news_snapshot` (raw בלבד) |
 | `post_analysis_collector.py` | D1..D+20 + תת-חלונות D+3/5/10/20; halt/delist/pending מפורש; **recovery-from-trough** (היפוך מהשפל); **split/halt detector** (`detect_split_halt` → `split_halt_flag`/`split_halt_reason`, flag לא-הרסני) |
 | `intraday_timeseries.py` | M3 מעקב מדורג → `intraday_timeseries`: D0–D3 כל 10ד', D4–D20 ~3/יום (open/mid/close); key=(scan_date,ticker,timestamp); self-gating לחלונות D4–D20 (עמיד לדריפט-cron); רוכב על טריגר ה-intraday; floor יורש מ-watchlist; hours-guard מ-`intraday_scanner` |
-| `health_monitor.py` | M3 סוכן-בקרת-בריאות (READ-ONLY): 10 בדיקות-צינור / 5 עמודים (Freshness/Volume/Schema/Field/Ops); `--morning`/`--evening`; exit 0/1/2; `health_log.jsonl` מקומי. **בקרת-קלטים בלבד — לא מנקד/מפרש/נוגע ב-recovery (לא edge).** schema-drift שומר מבאג TAB_TIMESERIES. ראה docs/MONITORING.md |
+| `health_monitor.py` | M3 סוכן-בקרת-בריאות: 10 בדיקות-צינור / 5 עמודים (Freshness/Volume/Schema/Field/Ops); `--morning`/`--evening`; exit 0/1/2; כותב טאב-בקרה `health_log` ב-Sheet (היחיד שנכתב; שאר הטאבים read-only) + `health_log.jsonl` מקומי. **בקרת-קלטים בלבד — לא מנקד/מפרש/נוגע ב-recovery (לא edge).** schema-drift שומר מבאג TAB_TIMESERIES. ראה docs/MONITORING.md |
+| `pages/3_System_Health.py` | דף-תקינות (view-only): היסטוריית-ריצות מ-`health_log` + גרף-מגמה + טבלה מסוננת; באנר-סטטוס בעמוד-הבית (`dashboard.py`). בקרה תפעולית בלבד |
 | `gradual_scanner.py` | M3 סורק-EOD **השערה נפרדת** (`gradual_drop`): close היום ≥10% מתחת ל-close לפני 5 ימי-מסחר (מסנן Finviz `Performance: Week -10%` + אימות yfinance); אותה רצפת-נזילות; מתייג `drop_kind="gradual_drop"`, `source="gradual_eod"`; דדופ חוצה-סוגים 20 ימי-מסחר (`recent_capture_set`); משתמש ב-helpers של `scanner.py` ללא נגיעה בו; קורא fundamentals inline. **value-trap: פונדמנטלי=פיצ'ר לא פילטר; אפס החלטת-כניסה; הכרעה ל-M4.** post_analysis/intraday_timeseries/catalyst קולטים את השורות אוטומטית |
 | `sheets_manager.py` | I/O ל-Sheets; `upsert_by_key` (merge לפי שם-עמודה, migration-safe); creds: file→st.secrets→env |
 | `config.py` | מקור-אמת לפרמטרים/טאבים/סכמות (כולל `TIMESERIES_HEADER`, `TS_TIER1_MAX_DAY=3`, `TS_TIER2_MAX_DAY=20`) |

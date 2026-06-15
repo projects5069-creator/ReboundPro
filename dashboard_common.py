@@ -545,3 +545,105 @@ def render(drop_kind, heading, blurb):
     with tstat:
         _stats(watch, drop_kind)
     st.caption("ReboundPro · monitoring only · אין כאן לוגיקת מסחר.")
+
+
+# ── System Health (operational control — NOT data-quality/edge) ──────────────
+_HEALTH_ICON = {"healthy": "✅", "warning": "⚠️", "error": "❌"}
+_SEV_NUM = {"healthy": 0, "warning": 1, "error": 2}
+
+
+def load_health(sheet_id):
+    return load(sheet_id, config.TAB_HEALTH_LOG, ["exit_code"])
+
+
+def _health_age(run_at):
+    """(human age string, is_stale>24h). run_at = 'YYYY-MM-DD HH:MM:SS TZ' (ET)."""
+    try:
+        t = pd.Timestamp(str(run_at)[:19], tz="America/New_York")
+        hrs = (pd.Timestamp.now(tz="America/New_York") - t).total_seconds() / 3600
+        if hrs < 1:
+            return f"לפני {int(hrs * 60)} דקות", False
+        if hrs < 24:
+            return f"לפני {hrs:.1f} שעות", False
+        return f"לפני {hrs / 24:.1f} ימים", True
+    except Exception:
+        return str(run_at), False
+
+
+def render_health_banner(sheet_id):
+    """Top-of-home status banner from the latest health_log run."""
+    df = load_health(sheet_id)
+    if df.empty or "run_at" not in df.columns:
+        st.info("🩺 בקרה טרם רצה (אין health_log). הרץ `health_monitor.py --morning`.")
+        return
+    last = df.sort_values("run_at").iloc[-1]
+    status = str(last.get("overall_status", "")).strip()
+    icon = _HEALTH_ICON.get(status, "❔")
+    age, stale = _health_age(last.get("run_at", ""))
+    base = (f"{icon} בקרת-מערכת: **{status}** · בדיקה אחרונה {age} · "
+            f"mode={last.get('mode', '')} · {last.get('summary_text', '')} · "
+            "פרטים בדף **🩺 System Health**")
+    if stale:
+        st.warning(base + "  ⚠️ **הבקרה לא רצה >24ש'** — בקרה-שלא-רצה היא עצמה בעיה.")
+    elif status == "error":
+        st.error(base)
+    elif status == "warning":
+        st.warning(base)
+    elif status == "healthy":
+        st.success(base)
+    else:
+        st.info(base)
+
+
+def render_system_health(sheet_id):
+    """Full System Health page: latest status + trend + filterable run history.
+    Operational control only — what the monitor checked and when. NOT data-quality
+    analysis of the collected data, and NOT edge."""
+    st.title("🩺 System Health — היסטוריית בקרה")
+    st.caption("בקרה תפעולית בלבד — האם המערכת רצה / עובדת / מתועדת. "
+               "לא ניתוח-איכות של הנתונים עצמם, ולא edge (זה M4).")
+    if not sheet_id:
+        st.error("REBOUND_SHEET_ID לא מוגדר.")
+        return
+    sidebar_controls(sheet_id)
+    df = load_health(sheet_id)
+    if df.empty or "run_at" not in df.columns:
+        st.info("טרם נרשמו ריצות-בקרה (health_log ריק). הרץ `health_monitor.py`.")
+        return
+
+    df = df.sort_values("run_at")
+    last = df.iloc[-1]
+    status = str(last.get("overall_status", "")).strip()
+    age, stale = _health_age(last.get("run_at", ""))
+    c = st.columns(4)
+    kpi(c[0], "סטטוס אחרון", f"{_HEALTH_ICON.get(status, '❔')} {status}")
+    kpi(c[1], "exit_code", last.get("exit_code", "—"))
+    kpi(c[2], "בדיקה אחרונה", age)
+    kpi(c[3], "סה\"כ ריצות", len(df))
+    if stale:
+        st.warning("⚠️ הבקרה לא רצה ביותר מ-24 שעות — בקרה-שלא-רצה היא עצמה בעיה.")
+
+    # trend
+    st.markdown("**מגמת overall_status לאורך זמן** (0=בריא · 1=אזהרה · 2=תקלה)")
+    dft = df.copy()
+    dft["run_at_dt"] = pd.to_datetime(dft["run_at"].astype(str).str[:19], errors="coerce")
+    dft["sev"] = dft["overall_status"].map(_SEV_NUM)
+    st.plotly_chart(px.line(dft, x="run_at_dt", y="sev", color="mode", markers=True),
+                    width="stretch")
+
+    # filterable history (newest first)
+    st.markdown("**היסטוריית-ריצות**")
+    f = st.columns(2)
+    modes = sorted(df["mode"].dropna().unique()) if "mode" in df else []
+    sel_mode = f[0].multiselect("mode", modes, default=modes)
+    stats = sorted(df["overall_status"].dropna().unique()) if "overall_status" in df else []
+    sel_stat = f[1].multiselect("overall_status", stats, default=stats)
+    view = df
+    if sel_mode:
+        view = view[view["mode"].isin(sel_mode)]
+    if sel_stat:
+        view = view[view["overall_status"].isin(sel_stat)]
+    cols = [c for c in config.HEALTH_LOG_HEADER if c in view.columns]
+    st.caption(f"{len(view)} ריצות · severity לכל בדיקה: ok/warn/fail")
+    st.dataframe(view[cols].sort_values("run_at", ascending=False),
+                 width="stretch", hide_index=True, height=460)

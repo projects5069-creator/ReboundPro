@@ -160,6 +160,17 @@ TAB_WATCHLIST = "watchlist_live"
 TAB_POST = "post_analysis"
 TAB_SUMMARY = "daily_summary"
 
+# health_log — the ONLY tab the health monitor WRITES (operational control log,
+# not research data). One row per monitor run; one column per check + overall.
+TAB_HEALTH_LOG = "health_log"
+HEALTH_CHECK_IDS = [
+    "scanner-freshness", "intraday-freshness", "sheet-freshness",
+    "volume-anomaly", "continuity", "post-progress", "schema-drift",
+    "field-completeness", "duplicates-sanity", "contamination-trend",
+]
+HEALTH_LOG_HEADER = (["run_at", "mode", "overall_status", "exit_code"]
+                     + HEALTH_CHECK_IDS + ["summary_text"])
+
 # Shared watchlist schema (M1 EOD fields + M2 intraday-path fields). Both the
 # EOD scanner and the intraday scanner write this same header so the tab stays
 # column-aligned. Intraday fields are blank for EOD-sourced rows and vice versa.
