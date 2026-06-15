@@ -1,19 +1,24 @@
 name: ReboundPro Health Monitor
 
 # Operational pipeline-health checks (health_monitor.py). READ-ONLY against the
-# Sheet except the single health_log control tab. 3 runs per weekday (UTC; fixed
-# year-round like daily.yml — ET shifts with DST):
-#   13:00 UTC  pre-open   (~08:00 EST / 09:00 EDT)  --morning  "ready for the day?"
-#   17:00 UTC  mid-session(~12:00 EST / 13:00 EDT)  --morning  "freshness mid-day"
-#   23:30 UTC  post-close (~18:30 EST / 19:30 EDT)  --evening  "today's intake landed?"
-#              (~1h after daily.yml at 22:30 UTC, so EOD collection is in)
+# Sheet except the single health_log control tab. 3 runs per trading day (UTC):
+#   13:00 UTC  pre-open    (09:00 EDT / 08:00 EST, ~½h before open)  --morning
+#   17:30 UTC  mid-session (13:30 EDT / 12:30 EST)                   --morning
+#   01:00 UTC  post-close  (21:00 EDT / 20:00 EST of the PREVIOUS    --evening
+#              ET day, ~5h after close — EOD definitely done, no false "missing")
+#
+# DOW note (critical): 01:00 UTC of day X is 21:00 ET of day X-1, so the evening
+# run uses "2-6" (Tue–Sat UTC) to cover Mon–Fri TRADING. Using "1-5" would miss
+# Friday's evening (it falls on Sat UTC) and waste Monday's (it falls on Sun ET).
+# The cron is fixed UTC year-round; NY shifts 1h between EDT/EST so the market-
+# relative time drifts 1h twice a year — not critical for a health check.
 # Exit policy: only exit=2 (failure) fails the run (→ GitHub alert email); exit=1
 # (warning) is logged but the run stays green, so legacy warnings don't email 3x/day.
 on:
   schedule:
-    - cron: "0 13 * * 1-5"
-    - cron: "0 17 * * 1-5"
-    - cron: "30 23 * * 1-5"
+    - cron: "0 13 * * 1-5"     # pre-open    --morning
+    - cron: "30 17 * * 1-5"    # mid-session --morning
+    - cron: "0 1 * * 2-6"      # post-close (prev ET day) --evening
   workflow_dispatch:
     inputs:
       mode:
@@ -51,8 +56,8 @@ jobs:
         id: mode
         run: |
           case "${{ github.event.schedule }}" in
-            "30 23 * * 1-5") flag="--evening" ;;
-            "0 13 * * 1-5"|"0 17 * * 1-5") flag="--morning" ;;
+            "0 1 * * 2-6") flag="--evening" ;;
+            "0 13 * * 1-5"|"30 17 * * 1-5") flag="--morning" ;;
             *) flag="--${{ github.event.inputs.mode || 'morning' }}" ;;   # workflow_dispatch
           esac
           echo "flag=$flag" >> "$GITHUB_OUTPUT"
