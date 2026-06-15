@@ -30,6 +30,7 @@ import sys
 from collections import Counter
 from datetime import datetime, timedelta, date, time as dtime
 
+import pandas as pd
 import pytz
 import exchange_calendars as ec
 
@@ -43,6 +44,7 @@ import catalyst as cat
 ET = pytz.timezone("America/New_York")
 OK, WARN, FAIL = 0, 1, 2
 EMOJI = {OK: "✅", WARN: "⚠️", FAIL: "❌"}
+CALM_ICON = "🌙"   # severity stays OK (never affects exit) — visual "market closed, nothing expected"
 STATUS_WORD = {OK: "ok", WARN: "warn", FAIL: "fail"}
 OVERALL_WORD = {OK: "healthy", WARN: "warning", FAIL: "error"}
 LOG_PATH = os.path.join(os.path.dirname(__file__), "health_log.jsonl")
@@ -87,8 +89,11 @@ class Monitor:
     def __init__(self):
         self.findings = []
 
-    def add(self, cid, pillar, status, msg):
-        self.findings.append({"id": cid, "pillar": pillar, "status": status, "msg": msg})
+    def add(self, cid, pillar, status, msg, icon=None):
+        # icon overrides the severity emoji (e.g. CALM_ICON for "market closed" —
+        # still severity=OK so exit-code is unaffected).
+        self.findings.append({"id": cid, "pillar": pillar, "status": status,
+                              "msg": msg, "icon": icon})
 
     def overall(self):
         return max((f["status"] for f in self.findings), default=OK)
@@ -121,19 +126,24 @@ def run_checks(data, now, cal):
             m.add("scanner-freshness", "Freshness", WARN,
                   f"scan אחרון {last} מאוחר מהצפוי {exp_last_s} (בדוק שעון/לוח).")
 
-    # 2. intraday-freshness
-    if cal.is_session(__import__("pandas").Timestamp(exp_last)):
+    # 2. intraday-freshness — only a real concern when the market is OPEN TODAY.
+    #    On a weekend/holiday no intraday collection is expected → CALM (severity OK,
+    #    🌙 icon), so "market closed" never shows a yellow ⚠️ that dulls the eye.
+    today = now.date()
+    if not cal.is_session(pd.Timestamp(today)):
+        m.add("intraday-freshness", "Freshness", OK,
+              f"שוק XNYS סגור היום ({today}, סופ\"ש/חג) — לא צפוי איסוף intraday.",
+              icon=CALM_ICON)
+    else:
         has_intraday = any(d.get("scan_date") == exp_last_s and d.get("source") == "intraday"
                            for d in wdicts)
         if has_intraday:
             m.add("intraday-freshness", "Freshness", OK,
-                  f"יש שורות source=intraday מ-{exp_last_s}.")
+                  f"יום-מסחר; יש שורות source=intraday מ-{exp_last_s}.")
         else:
             m.add("intraday-freshness", "Freshness", WARN,
-                  f"השוק היה פתוח {exp_last_s} אך אין שורות source=intraday "
+                  f"יום-מסחר ({today}) אך 0 שורות source=intraday ל-{exp_last_s} "
                   "(הסורק התוך-יומי לא רץ / source ריק).")
-    else:
-        m.add("intraday-freshness", "Freshness", OK, f"{exp_last_s} לא יום-מסחר — דילוג.")
 
     # 3. sheet-freshness (all 6 tabs accessible; core non-empty)
     accessible = sum(1 for t in EXPECTED_HEADERS if data[t][0])
@@ -171,7 +181,6 @@ def run_checks(data, now, cal):
     if scan_dates:
         try:
             dmin = datetime.strptime(scan_dates[0], "%Y-%m-%d").date()
-            import pandas as pd
             sess = cal.sessions_in_range(pd.Timestamp(dmin), pd.Timestamp(exp_last))
             present = set(scan_dates)
             missing = [s.date().isoformat() for s in sess if s.date().isoformat() not in present]
@@ -316,6 +325,17 @@ def intake_summary(data, exp_last_s):
 
 
 # ── reporting ────────────────────────────────────────────────────────────────
+def finding_line(f):
+    icon = f.get("icon") or EMOJI[f["status"]]
+    return f"{icon} [{f['pillar']:<10}] {f['id']}: {f['msg']}"
+
+
+def details_text(m):
+    """Full per-check explanation lines (newline-joined) — for STEP_SUMMARY, the
+    health_log details column, and the dashboard expander."""
+    return "\n".join(finding_line(f) for f in m.findings)
+
+
 def verdict_text(m):
     n_fail = sum(1 for f in m.findings if f["status"] == FAIL)
     n_warn = sum(1 for f in m.findings if f["status"] == WARN)
@@ -331,7 +351,7 @@ def report(m, mode, exp_last_s, data):
     print(f"\n{title}   (יום-מסחר אחרון צפוי: {exp_last_s})")
     print("=" * 64)
     for f in m.findings:
-        print(f"{EMOJI[f['status']]} [{f['pillar']:<10}] {f['id']}: {f['msg']}")
+        print(finding_line(f))
     if mode == "evening":
         print("-" * 64)
         print("📥 מה נאסף: " + intake_summary(data, exp_last_s))
@@ -358,7 +378,7 @@ def write_sheet_log(m, mode, exp_last_s, now):
         return
     row = {"run_at": now.strftime("%Y-%m-%d %H:%M:%S %Z"), "mode": mode,
            "overall_status": OVERALL_WORD[m.overall()], "exit_code": m.overall(),
-           "summary_text": verdict_text(m)}
+           "summary_text": verdict_text(m), "details_text": details_text(m)}
     for f in m.findings:
         row[f["id"]] = STATUS_WORD[f["status"]]
     try:

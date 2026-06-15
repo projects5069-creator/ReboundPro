@@ -169,7 +169,7 @@ HEALTH_CHECK_IDS = [
     "field-completeness", "duplicates-sanity", "contamination-trend",
 ]
 HEALTH_LOG_HEADER = (["run_at", "mode", "overall_status", "exit_code"]
-                     + HEALTH_CHECK_IDS + ["summary_text"])
+                     + HEALTH_CHECK_IDS + ["summary_text", "details_text"])
 
 # Shared watchlist schema (M1 EOD fields + M2 intraday-path fields). Both the
 # EOD scanner and the intraday scanner write this same header so the tab stays

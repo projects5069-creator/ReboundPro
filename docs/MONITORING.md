@@ -53,7 +53,7 @@ uv run ... python health_monitor.py
 
 ### עמוד טריות (Freshness)
 1. **scanner-freshness** — ה-scan_date האחרון ב-watchlist == יום-המסחר האחרון הצפוי (XNYS; אחרי 18:30 ET נספר היום, אחרת אתמול). מפגר → **❌**.
-2. **intraday-freshness** — יש שורות `source=intraday` מיום-המסחר הפתוח האחרון. שוק היה פתוח ואין → **⚠️**.
+2. **intraday-freshness** — **תלוי-שוק:** אם **היום** אינו יום-מסחר (סופ"ש/חג, XNYS) → **🌙 מצב-רגוע** (severity=ok, לא משפיע על exit) — "שוק סגור, לא צפוי intraday". אם **היום** יום-מסחר ויש שורות `source=intraday` → **✅**; יום-מסחר ו-0 שורות → **⚠️**. (כך "שוק סגור" לעולם לא מציג ⚠️ צהוב שמאמן את העין להתעלם.)
 3. **sheet-freshness** — 6 הטאבים נגישים; טאב-ליבה (watchlist) ריק → **❌**.
 
 ### עמוד נפח/שלמות (Volume/Completeness)
@@ -81,13 +81,13 @@ uv run ... python health_monitor.py
 - **duplicates ❌** — מפתח כפול ב-watchlist. חריג (ה-upsert אמור למנוע) — בדיקה ידנית של ה-Sheet.
 
 ## health_log (טאב-בקרה ב-Sheet) + health_log.jsonl (מקומי)
-- **טאב `health_log` ב-Sheet** (`config.HEALTH_LOG_HEADER`): שורה לכל ריצה — `run_at, mode, overall_status (healthy/warning/error), exit_code`, עמודה לכל אחת מ-10 הבדיקות עם ה-severity שלה (ok/warn/fail), ו-`summary_text`. key=`run_at` (append). זהו **הטאב היחיד שהמוניטור כותב** — שאר הטאבים read-only מהמוניטור.
+- **טאב `health_log` ב-Sheet** (`config.HEALTH_LOG_HEADER`): שורה לכל ריצה — `run_at, mode, overall_status (healthy/warning/error), exit_code`, עמודה לכל אחת מ-10 הבדיקות עם ה-severity שלה (ok/warn/fail), `summary_text`, ו-**`details_text`** (כל 10 שורות-ההסבר המלאות, מופרדות בשורה — מזין את ה-expander בדף). key=`run_at` (append). זהו **הטאב היחיד שהמוניטור כותב** — שאר הטאבים read-only מהמוניטור.
 - **`health_log.jsonl` מקומי**: `{ts, mode, expected_last_scan, overall, checks:[{id,status}]}` לכל ריצה (עקיבת-מגמות מקומית).
 
 ## דף System Health בדashboard (`pages/3_System_Health.py`)
 קורא את טאב `health_log` ומציג (view-only, דרך `dashboard_common`):
 - **באנר-סטטוס בעמוד-הבית** (`dashboard.py`): הריצה האחרונה — ✅/⚠️/❌, "בדיקה אחרונה לפני X", קישור-טקסט לדף. אם הבדיקה האחרונה >24ש' → דגל "הבקרה לא רצה לאחרונה" (בקרה-שלא-רצה = בעיה). אם אין health_log → "בקרה טרם רצה".
-- **דף מלא:** מטריקות-על (סטטוס/exit/גיל/סה"כ ריצות) · גרף-מגמת `overall_status` לאורך זמן · טבלת-ריצות (חדש למעלה) עם סינון לפי mode ו-status.
+- **דף מלא:** מטריקות-על (סטטוס/exit/גיל/סה"כ ריצות) · גרף-מגמת `overall_status` לאורך זמן · טבלת-ריצות (חדש למעלה) עם סינון לפי mode ו-status · **expander "פירוט מלא לכל ריצה"** — לחיצה על ריצה פותחת את כל 10 הבדיקות עם אייקון + הסבר מלא (מ-`details_text`), כולל 🌙 ל"שוק סגור". כך רואים בדיוק מה הסוכן בדק ומצא בכל בדיקה.
 - **בקרה תפעולית בלבד** — מציג מה הסוכן בדק ומתי, לא ניתוח-איכות-של-הנתונים ולא edge.
 
 ## גבול קשיח

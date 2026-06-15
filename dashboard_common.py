@@ -653,7 +653,24 @@ def render_system_health(sheet_id=None):
         view = view[view["mode"].isin(sel_mode)]
     if sel_stat:
         view = view[view["overall_status"].isin(sel_stat)]
-    cols = [c for c in config.HEALTH_LOG_HEADER if c in view.columns]
+    # details_text powers the per-run expanders below, not the wide table
+    cols = [c for c in config.HEALTH_LOG_HEADER if c in view.columns and c != "details_text"]
+    view = view.sort_values("run_at", ascending=False)
     st.caption(f"{len(view)} ריצות · severity לכל בדיקה: ok/warn/fail")
-    st.dataframe(view[cols].sort_values("run_at", ascending=False),
-                 width="stretch", hide_index=True, height=460)
+    st.dataframe(view[cols], width="stretch", hide_index=True, height=360)
+
+    # full per-check explanation for each run (click to open) — newest first
+    st.markdown("**פירוט מלא לכל ריצה** (לחץ לפתיחה — מה הסוכן בדק ומצא בכל בדיקה)")
+    for _, r in view.head(25).iterrows():
+        icon = _HEALTH_ICON.get(str(r.get("overall_status", "")).strip(), "❔")
+        head = f"{icon} {r.get('run_at', '')} · {r.get('mode', '')} · {r.get('summary_text', '')}"
+        with st.expander(head):
+            details = str(r.get("details_text", "") or "")
+            if details.strip():
+                st.text(details)
+            else:   # legacy rows (pre details_text) — reconstruct from severity columns
+                for cid in config.HEALTH_CHECK_IDS:
+                    if cid in r:
+                        st.write(f"{r.get(cid, '')} — {cid}")
+    if len(view) > 25:
+        st.caption(f"(מוצגים 25 הראשונים מתוך {len(view)})")
