@@ -88,12 +88,65 @@ FUND_GROUPS = {
                   "Shs Outstand", "Shs Float", "Employees"],
 }
 
+# Display-only short labels for long column names (header shortening; underlying
+# column names / data are UNCHANGED — applied only at render via Styler.relabel).
+SHORT_LABELS = {
+    # watchlist — drop / mid
+    "drop_pct_from_open": "drop%open", "close_pct_from_open": "close%open",
+    "pct_change_prevclose": "%prevcls", "liquidity_bucket": "liq",
+    "market_regime": "regime", "adv_dollar": "adv$", "market_cap": "mcap",
+    "rsi_14": "rsi", "spy_change_pct": "spy%", "sector_etf_change_pct": "sectETF%",
+    "drop_pct_window": "drop%win", "lookback_trading_days": "lookback",
+    "ref_close_window": "refcls_win",
+    # watchlist — context signals
+    "pct_from_52w_high": "%52wH", "pct_from_52w_low": "%52wL",
+    "prior_decline_20d_pct": "decl20d%", "prior_decline_60d_pct": "decl60d%",
+    "vix_level": "vix", "drop_day_rel_volume": "relvol",
+    "sector_momentum_5d": "secmom5d", "sector_momentum_20d": "secmom20d",
+    # watchlist — intraday path
+    "first_cross_at": "1stX@", "first_cross_price": "1stX_px",
+    "first_cross_drop_pct": "1stX_drop%", "intraday_low": "id_low",
+    "intraday_low_at": "id_low@", "recovery_from_low_pct": "rec%low",
+    "reversal_confirmed": "rev_ok", "scans_count": "scans",
+    "last_update_at": "upd@",
+    # post_analysis
+    "forward_days_available": "fwd_days", "ref_close": "refcls",
+    "max_recovery_pct": "maxrec%", "day_of_max_recovery": "d_maxrec",
+    "max_further_drop_pct": "maxdrop%", "day_of_max_drop": "d_maxdrop",
+    "trough_price": "trough_px", "trough_day": "trough_d",
+    "recovery_from_trough_pct": "rec%trough",
+    "max_recovery_from_trough_pct": "maxrec%trough",
+    "last_close_pct": "lastcls%", "split_halt_flag": "halt?",
+    "split_halt_reason": "halt_why",
+    # daily_summary reject buckets
+    "total_finviz_candidates": "finviz_n", "passed_floor": "passed",
+    "below_min_price": "<price", "below_min_cap": "<cap",
+    "below_min_adv": "<adv", "drop_below_threshold": "<drop",
+    "other_rejects": "other_rej",
+}
+
 _CSS = """
 <style>
     .block-container { padding-top: 1rem; padding-bottom: 0.5rem; }
     h1 { padding-top: 0.5rem; padding-bottom: 0.5rem; font-size: 1.8rem; margin-top: 0; }
     h2 { padding-top: 0.3rem; padding-bottom: 0.3rem; font-size: 1.2rem; }
     div[data-testid="metric-container"] { padding: 5px; }
+    /* ── compact, width-fitting tables (show_table) ───────────────────────────
+       Streamlit 1.58's st.dataframe is a canvas grid: it ignores CSS font-size,
+       never wraps cells, and adds a horizontal scrollbar when columns overflow.
+       We render the SAME styled tables as HTML instead, so every column stays
+       visible, cells wrap in-place, and the table fits 100% of the page width
+       with NO horizontal scroll. View-only — no data/logic change. */
+    .rb-table { width: 100%; overflow-x: hidden; overflow-y: auto; margin-bottom: 0.6rem; }
+    .rb-table table { width: 100% !important; table-layout: fixed; border-collapse: collapse;
+                      font-size: 0.70rem; direction: ltr; }
+    .rb-table th, .rb-table td { word-break: break-word; overflow-wrap: anywhere;
+                      white-space: normal; padding: 2px 4px; line-height: 1.15;
+                      border: 1px solid rgba(128,128,128,0.18); text-align: left;
+                      vertical-align: top; }
+    .rb-table th { font-weight: 600; background: rgba(128,128,128,0.14);
+                   position: sticky; top: 0; z-index: 1; }
+    .rb-table td { font-variant-numeric: tabular-nums; }
 </style>
 """
 
@@ -144,6 +197,26 @@ def styled(df):
         else:                       # known floats + any other numeric -> 2dp + commas
             fmt[c] = "{:,.2f}"
     return df.style.format(fmt, na_rep="")
+
+
+def show_table(obj, height=None, rename=SHORT_LABELS):
+    """View-only replacement for st.dataframe that NEVER scrolls horizontally.
+
+    Accepts a DataFrame (auto-formatted via styled()) or a ready Styler (e.g. one
+    that already has a row-highlight .apply). Renders as a compact HTML table:
+    table-layout:fixed + width:100% makes every column share the page width and
+    wrap in-cell, so all columns stay visible with no horizontal scroll. `rename`
+    only relabels the DISPLAYED headers (data/column names unchanged); `height`
+    caps the vertical box (px) and turns on vertical scroll. No logic/data change.
+    """
+    sty = styled(obj) if isinstance(obj, pd.DataFrame) else obj
+    if rename:
+        cols = list(sty.data.columns)
+        sty = sty.relabel_index([rename.get(c, c) for c in cols], axis="columns")
+    html = sty.hide(axis="index").to_html()
+    box = f"max-height:{int(height)}px;" if height else ""
+    st.markdown(f'<div class="rb-table" style="{box}">{html}</div>',
+                unsafe_allow_html=True)
 
 
 def _highlight_contaminated(row):
@@ -234,8 +307,7 @@ def _health(watch, post, sheet_id, days):
                                title="דחיות לפי יום (stacked)"), width="stretch")
         show = ["scan_date", "total_finviz_candidates", "passed_floor"] + reject_cols + ["other_rejects"]
         show = [c for c in show if c in summ.columns]
-        st.dataframe(styled(summ[show].sort_values("scan_date", ascending=False)),
-                     width="stretch", hide_index=True)
+        show_table(summ[show].sort_values("scan_date", ascending=False))
 
 
 def _watchlist(watch, drop_kind, days):
@@ -275,8 +347,7 @@ def _watchlist(watch, drop_kind, days):
     cols = [c for c in base + dropcol + mid + context + extra if c in view.columns]
     sortcol = sortcol if sortcol in view.columns else "scan_date"
     st.caption(f"{len(view)} שורות")
-    st.dataframe(styled(view[cols].sort_values(sortcol)),
-                 width="stretch", hide_index=True, height=520)
+    show_table(view[cols].sort_values(sortcol), height=520)
 
 
 def _stock_card(watch, post, ts, fund, news):
@@ -367,7 +438,7 @@ def _stock_card(watch, post, ts, fund, news):
                      "trough_price", "trough_day", "recovery_from_trough_pct",
                      "max_recovery_from_trough_pct", "last_close_pct", "dN_date"]
             pcols = [c for c in pcols if c in pvc.columns]
-            st.dataframe(styled(pvc[pcols]), width="stretch", hide_index=True)
+            show_table(pvc[pcols])
             sub = [(w, f"max_recovery_{w}d") for w in config.POST_ANALYSIS_SUBWINDOWS
                    if f"max_recovery_{w}d" in pvc.columns]
             row0 = pvc.iloc[0]
@@ -394,8 +465,7 @@ def _stock_card(watch, post, ts, fund, news):
                     continue
                 with gcols[i % 2]:
                     st.markdown(f"**{grp}**")
-                    st.dataframe(pd.DataFrame(avail, columns=["שדה", "ערך"]),
-                                 width="stretch", hide_index=True)
+                    show_table(pd.DataFrame(avail, columns=["שדה", "ערך"]))
 
     # 4) news (news_snapshot) — raw headlines
     st.markdown("**חדשות (news_snapshot, point-in-time)**")
@@ -416,8 +486,7 @@ def _stock_card(watch, post, ts, fund, news):
                     items.append((nrow.get(f"datetime_{i}", ""), nrow.get(f"source_{i}", ""),
                                   h, nrow.get(f"url_{i}", "")))
             if items:
-                st.dataframe(pd.DataFrame(items, columns=["datetime", "source", "headline", "url"]),
-                             width="stretch", hide_index=True)
+                show_table(pd.DataFrame(items, columns=["datetime", "source", "headline", "url"]))
             else:
                 st.caption("אין כותרות שמורות.")
 
@@ -451,7 +520,7 @@ def _post(post):
     styler = styled(pv[cols])
     if "split_halt_flag" in cols:
         styler = styler.apply(_highlight_contaminated, axis=1)
-    st.dataframe(styler, width="stretch", hide_index=True, height=460)
+    show_table(styler, height=460)
 
     # max_recovery distribution — exclude contaminated rows so the artifact spikes
     # don't distort the descriptive view (raw rows are still kept in the table above).
@@ -657,7 +726,7 @@ def render_system_health(sheet_id=None):
     cols = [c for c in config.HEALTH_LOG_HEADER if c in view.columns and c != "details_text"]
     view = view.sort_values("run_at", ascending=False)
     st.caption(f"{len(view)} ריצות · severity לכל בדיקה: ok/warn/fail")
-    st.dataframe(view[cols], width="stretch", hide_index=True, height=360)
+    show_table(view[cols], height=360)
 
     # full per-check explanation for each run (click to open) — newest first
     st.markdown("**פירוט מלא לכל ריצה** (לחץ לפתיחה — מה הסוכן בדק ומצא בכל בדיקה)")
