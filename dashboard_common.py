@@ -11,12 +11,15 @@ pages; they differ only by the drop_kind argument.
    recommendations. Those are M5 and await the M4 decision. Data-and-health viewer
    only. Collection infrastructure (Sheet + collectors) is shared and unchanged.
 """
+import gspread
 import pandas as pd
 import plotly.express as px
 import streamlit as st
 
 import config
 import sheets_manager as sm
+
+_is_quota = sm._is_quota_error   # 429 detector (shared with the read path)
 
 # ── numeric coercion sets (per tab) ──────────────────────────────────────────
 NUM_WATCH = ["drop_pct_from_open", "close_pct_from_open", "pct_change_prevclose",
@@ -168,9 +171,17 @@ def resolve_sheet_id():
         return ""
 
 
-@st.cache_data(ttl=300)
-def load(sheet_id, tab, num_cols):
-    header, rows = sm.read_rows(sheet_id, tab)
+# Friendly degradation text for a Sheets quota (429) spike — shown instead of a
+# red traceback that would kill the whole page. Transient; recovers in ~1 min.
+QUOTA_MSG = ("🕒 הנתונים זמנית לא זמינים — חריגת-מכסה ב-Google Sheets API "
+             "(יותר מדי קריאות בו-זמנית). הנתונים יחזרו תוך כדקה — נסה רענון.")
+
+# cache TTL raised 300→900s: the data changes a few times/day, so re-reading the
+# Sheet every 5 min only burns the per-minute read quota for nothing.
+CACHE_TTL = 900
+
+
+def _coerce(header, rows, num_cols):
     if not header:
         return pd.DataFrame()
     df = pd.DataFrame(rows, columns=header)
@@ -178,6 +189,28 @@ def load(sheet_id, tab, num_cols):
         if c in df.columns:
             df[c] = pd.to_numeric(df[c], errors="coerce")
     return df
+
+
+@st.cache_data(ttl=CACHE_TTL)
+def load(sheet_id, tab, num_cols):
+    header, rows = sm.read_rows(sheet_id, tab)
+    return _coerce(header, rows, num_cols)
+
+
+@st.cache_data(ttl=CACHE_TTL)
+def _read_batch(sheet_id, tabs):
+    """Cached raw batch read (tabs is a tuple for hashability) → {tab:(hdr,rows)}.
+    One values:batchGet for all tabs instead of one read per tab — collapses a
+    full page render from ~10 Sheet API calls to ~2."""
+    return sm.batch_read(sheet_id, list(tabs))
+
+
+def load_many(sheet_id, specs):
+    """specs: {tab: num_cols}. Reads ALL tabs in one batch and returns
+    {tab: DataFrame} (numeric-coerced per tab)."""
+    raw = _read_batch(sheet_id, tuple(specs))
+    return {tab: _coerce(*raw.get(tab, ([], [])), num_cols)
+            for tab, num_cols in specs.items()}
 
 
 def kpi(col, label, value):
@@ -251,7 +284,7 @@ def sidebar_controls(sheet_id):
         if st.button("🔄 Refresh data", type="primary"):
             st.cache_data.clear()
             st.rerun()
-        st.caption("נתונים נקראים מ-Google Sheet (cache 5 דק').")
+        st.caption("נתונים נקראים מ-Google Sheet (cache 15 דק').")
         st.caption(f"Sheet: …{sheet_id[-8:]}")
         try:
             st.caption(f"SA: {sm.service_account_email()}")
@@ -260,7 +293,7 @@ def sidebar_controls(sheet_id):
 
 
 # ── per-tab renderers ────────────────────────────────────────────────────────
-def _health(watch, post, sheet_id, days):
+def _health(watch, post, summ, days):
     st.subheader("🩺 בריאות האיסוף")
     last_day = days[-1] if days else "—"
     last_day_n = int((watch["scan_date"] == last_day).sum())
@@ -295,7 +328,6 @@ def _health(watch, post, sheet_id, days):
     st.markdown("**פילוח סיבות-דחייה (EOD scanner) — `daily_summary`**")
     st.caption("הערה: daily_summary הוא בריאות סורק ה-EOD (intraday_drop) — גלובלי, "
                "לא מפוצל לפי drop_kind (לסורק gradual אין עדיין טבלת-דחיות נפרדת).")
-    summ = load(sheet_id, config.TAB_SUMMARY, NUM_SUMMARY)
     if summ.empty:
         st.info("daily_summary עדיין ריק — יתמלא בריצת ה-EOD הבאה.")
     else:
@@ -578,11 +610,19 @@ def render(drop_kind, heading, blurb):
     sidebar_controls(sheet_id)
 
     try:
-        watch = load(sheet_id, config.TAB_WATCHLIST, NUM_WATCH)
-        post = load(sheet_id, config.TAB_POST, NUM_POST)
-        ts = load(sheet_id, config.TAB_TIMESERIES, NUM_TS)
-        fund = load(sheet_id, config.TAB_FUNDAMENTALS, [])
-        news = load(sheet_id, config.TAB_NEWS, [])
+        # one batched read for all tabs (≈2 API calls total, not ~2 per tab)
+        data = load_many(sheet_id, {
+            config.TAB_WATCHLIST: NUM_WATCH, config.TAB_POST: NUM_POST,
+            config.TAB_TIMESERIES: NUM_TS, config.TAB_FUNDAMENTALS: [],
+            config.TAB_NEWS: [], config.TAB_SUMMARY: NUM_SUMMARY,
+        })
+        watch, post, ts = (data[config.TAB_WATCHLIST], data[config.TAB_POST],
+                           data[config.TAB_TIMESERIES])
+        fund, news, summ = (data[config.TAB_FUNDAMENTALS], data[config.TAB_NEWS],
+                            data[config.TAB_SUMMARY])
+    except gspread.exceptions.APIError as e:
+        (st.info(QUOTA_MSG) if _is_quota(e) else st.error(f"שגיאת קריאה מה-Sheet: {e}"))
+        st.stop()
     except Exception as e:
         st.error(f"שגיאת קריאה מה-Sheet: {e}")
         st.stop()
@@ -606,7 +646,7 @@ def render(drop_kind, heading, blurb):
         ["🩺 Collection Health", "📋 Watchlist", "🃏 Stock Card",
          "🎯 Post-Analysis", "📊 Descriptive Stats"])
     with th:
-        _health(watch, post, sheet_id, days)
+        _health(watch, post, summ, days)
     with tw:
         _watchlist(watch, drop_kind, days)
     with tc:
@@ -648,7 +688,12 @@ def render_health_banner(sheet_id=None):
         sheet_id = resolve_sheet_id()
     if not sheet_id:
         return
-    df = load_health(sheet_id)
+    try:
+        df = load_health(sheet_id)
+    except gspread.exceptions.APIError as e:
+        # a transient quota spike must NOT take down the whole home page
+        st.info(QUOTA_MSG if _is_quota(e) else f"🩺 בקרה לא נקראה מה-Sheet: {e}")
+        return
     if df.empty or "run_at" not in df.columns:
         st.info("🩺 בקרה טרם רצה (אין health_log). הרץ `health_monitor.py --morning`.")
         return
@@ -685,7 +730,11 @@ def render_system_health(sheet_id=None):
         st.error("REBOUND_SHEET_ID לא מוגדר.")
         return
     sidebar_controls(sheet_id)
-    df = load_health(sheet_id)
+    try:
+        df = load_health(sheet_id)
+    except gspread.exceptions.APIError as e:
+        st.info(QUOTA_MSG if _is_quota(e) else f"שגיאת קריאה מה-Sheet: {e}")
+        return
     if df.empty or "run_at" not in df.columns:
         st.info("טרם נרשמו ריצות-בקרה (health_log ריק). הרץ `health_monitor.py`.")
         return

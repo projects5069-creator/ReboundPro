@@ -49,6 +49,24 @@ uv run ... python health_monitor.py
 - **הפעלה ידנית:** GitHub → Actions → *ReboundPro Health Monitor* → **Run workflow** → בחר `mode` (morning/evening) → Run. (`workflow_dispatch` — לבדיקה ראשונה בלי לחכות ל-cron.)
 - אותם secrets/deps כמו `daily.yml`; לא נוגע ב-daily/intraday.
 
+### ⚠️ ה-trigger בפועל = pinger ב-cron-job.org (לא ה-cron הנייטיב של GitHub)
+ה-`schedule` הנייטיב של GitHub Actions **לא יורה בריפו הזה** (אומת 2026-06-15: `event=schedule` total_count=0 ל-health/daily/intraday מאז יצירת הריפו — GitHub cron הוא best-effort ולא אמין, במיוחד בריפו חדש ובזמני `:00`). לכן ה-intraday מופעל דרך **pinger ב-cron-job.org** שקורא לנקודת-הקצה של `workflow_dispatch`, ויש להוסיף את **health** לאותו מנגנון. ה-`schedule` נשאר מוגדר ב-workflow כגיבוי לא-מזיק. ה-mode-selection (`Select mode by schedule`, שורה ~61) כבר נופל ל-`inputs.mode` כש-`github.event.schedule` ריק → אפס שינוי-קוד נדרש.
+
+**3 ה-jobs ב-cron-job.org (אותו PAT/header של ה-intraday pinger; PAT עם הרשאת `Actions: read & write`):**
+
+| job | שעה (UTC) | ימים | body `inputs.mode` |
+|-----|-----------|------|--------------------|
+| pre-open    | `13:00` | Mon–Fri (1-5) | `morning` |
+| mid-session | `17:30` | Mon–Fri (1-5) | `morning` |
+| post-close  | `01:00` | **Tue–Sat (2-6)** | `evening` |
+
+לכל job ב-cron-job.org:
+- **URL:** `https://api.github.com/repos/projects5069-creator/ReboundPro/actions/workflows/health.yml/dispatches`
+- **Method:** `POST`
+- **Timezone:** UTC · **Headers:** `Accept: application/vnd.github+json` · `Authorization: Bearer <PAT>` · `X-GitHub-Api-Version: 2022-11-28` · `User-Agent: reboundpro-pinger`
+- **Body (post-close→`evening`):** `{"ref":"main","inputs":{"mode":"morning"}}`
+- **DOW של ה-01:00 = 2-6** (שלישי–שבת UTC) — אותו היגיון כמו ה-cron: `01:00 UTC` של יום X = `21:00 ET` של X-1, כדי לכסות מסחר שני–שישי.
+
 ## 10 הבדיקות (5 עמודי-ניטור)
 
 ### עמוד טריות (Freshness)

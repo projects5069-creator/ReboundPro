@@ -15,8 +15,10 @@ totals, then "pick a page in the sidebar".
 Run locally:  streamlit run dashboard.py
 Streamlit Cloud entrypoint stays dashboard.py; pages/ is auto-discovered.
 """
-# Streamlit Cloud redeploy marker — 2026-06-15a (compact HTML tables: no horizontal
-# scroll, all columns kept). Bump to force a clean reboot dropping cached modules.
+# Streamlit Cloud redeploy marker — 2026-06-15b (429 resilience: batched Sheet
+# reads ~12→2/render, TTL 300→900s, retry-on-429, graceful banner degradation).
+# Bump to force a clean reboot dropping cached modules.
+import gspread
 import plotly.express as px
 import streamlit as st
 
@@ -40,6 +42,10 @@ common.render_health_banner()
 
 try:
     watch = common.load(sheet_id, config.TAB_WATCHLIST, common.NUM_WATCH)
+except gspread.exceptions.APIError as e:
+    (st.info(common.QUOTA_MSG) if common._is_quota(e)
+     else st.error(f"שגיאת קריאה מה-Sheet: {e}"))
+    st.stop()
 except Exception as e:
     st.error(f"שגיאת קריאה מה-Sheet: {e}")
     st.stop()

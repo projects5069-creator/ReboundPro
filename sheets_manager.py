@@ -6,11 +6,35 @@ shared with the SA as Editor. Pattern mirrors DropsLab/gsheets_sync.
 """
 import json
 import os
+import time
 
 import gspread
 from google.oauth2.service_account import Credentials
 
 import config
+
+# Transient-429 retry (Sheets enforces a per-minute-per-user read quota; a single
+# shared SA + intraday/daily/health/dashboard can spike past it). Short backoff
+# absorbs the spike; persistent quota errors still propagate after the retries.
+READ_RETRIES = 2
+RETRY_BACKOFF_SEC = 2.0
+
+
+def _is_quota_error(e):
+    r = getattr(e, "response", None)
+    return r is not None and getattr(r, "status_code", None) == 429
+
+
+def _retry_read(fn, *args, **kwargs):
+    """Call fn(*args, **kwargs); on a 429 sleep with linear backoff and retry."""
+    for attempt in range(READ_RETRIES + 1):
+        try:
+            return fn(*args, **kwargs)
+        except gspread.exceptions.APIError as e:
+            if _is_quota_error(e) and attempt < READ_RETRIES:
+                time.sleep(RETRY_BACKOFF_SEC * (attempt + 1))
+                continue
+            raise
 
 SCOPES = [
     "https://www.googleapis.com/auth/spreadsheets",
@@ -121,12 +145,34 @@ def upsert_by_key(sheet_id, tab, header, new_dicts, key_cols):
 
 def read_rows(sheet_id, tab):
     client = get_client()
-    ss = client.open_by_key(sheet_id)
+    ss = _retry_read(client.open_by_key, sheet_id)
     try:
         ws = ss.worksheet(tab)
     except gspread.WorksheetNotFound:
         return [], []
-    vals = ws.get_all_values()
+    vals = _retry_read(ws.get_all_values)
     if not vals:
         return [], []
     return vals[0], vals[1:]
+
+
+def batch_read(sheet_id, tabs):
+    """Read many tabs in TWO API calls total (one spreadsheets.get for the tab
+    titles + one values:batchGet for all existing tabs), instead of read_rows'
+    ~2 calls PER tab. READ-ONLY. Returns {tab: (header, rows)}; a tab that does
+    not exist maps to ([], []) (and is never put in the batch range — an unknown
+    range would 400 the whole call). Same (header, rows) shape as read_rows.
+    """
+    http = get_client().http_client
+    meta = _retry_read(http.spreadsheets_get, sheet_id,
+                       params={"fields": "sheets.properties.title"})
+    titles = {s["properties"]["title"] for s in meta.get("sheets", [])}
+    out = {t: ([], []) for t in tabs}
+    want = [t for t in tabs if t in titles]
+    if not want:
+        return out
+    resp = _retry_read(http.values_batch_get, sheet_id, [f"'{t}'" for t in want])
+    for t, vr in zip(want, resp.get("valueRanges", [])):
+        vals = vr.get("values", [])
+        out[t] = (vals[0], vals[1:]) if vals else ([], [])
+    return out

@@ -114,7 +114,12 @@ def _patch(monkeypatch):
                 df[c] = pd.to_numeric(df[c], errors="coerce")
         return df
 
+    # Home + System Health still use load()/load_health(); the hypothesis pages
+    # now read all tabs via the batched load_many() — patch both paths.
     monkeypatch.setattr(common, "load", fake_load)
+    monkeypatch.setattr(common, "load_many",
+                        lambda sheet_id, specs: {t: fake_load(sheet_id, t, n)
+                                                 for t, n in specs.items()})
 
 
 @pytest.mark.parametrize("page", PAGES)
