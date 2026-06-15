@@ -9,7 +9,7 @@
 ## Repo & אחסון
 - **Repo:** `projects5069-creator/ReboundPro` (פרטי).
 - **Google Sheet:** `ReboundPro-Data` · ID `17HnxKlpFMrUGd1Hemg4s-_XipSRSqkIVIJdzkvjn_f4` · owner `projects5069@gmail.com`.
-- **Service account:** `ridinghigh-sheets-v2@ridinghigh-pro-v2.iam.gserviceaccount.com` (Editor על ה-Sheet). ה-SA **לא** יכול ליצור Sheets (Drive quota) — ה-Sheet נוצר ידנית ושותף.
+- **Service account:** `reboundpro-sheets@reboundpro-v1.iam.gserviceaccount.com` (Editor על ה-Sheet), בפרויקט GCP **`reboundpro-v1`** (project number 737740780440). ה-SA **לא** יכול ליצור Sheets (Drive quota) — ה-Sheet נוצר ידנית ושותף. **הפרדת-מכסה (2026-06-15):** ReboundPro קיבל project+SA משלו, מנותק מ-RidingHigh Pro (שעד אז חלקנו איתו `ridinghigh-sheets-v2@ridinghigh-pro-v2` → תחרות על דלי 60-reads/min/user משותף → 429). כעת לכל מערכת דלי-מכסה עצמאי. ה-SA הישן הושאר משותף על ה-Sheet כגיבוי בלבד.
 - **6 טאבי-דאטה:** `watchlist_live` · `daily_summary` · `fundamentals_snapshot` · `news_snapshot` · `post_analysis` · `intraday_timeseries` (M3). (`Sheet1` = ברירת-מחדל ריקה.) + **טאב-בקרה** `health_log` (M3-monitor — פלט הסוכן, לא נתוני-מחקר).
 
 ## Secrets (GitHub Actions — שמות בלבד)

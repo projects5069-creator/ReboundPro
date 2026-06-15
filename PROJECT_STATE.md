@@ -3,7 +3,7 @@
 **עודכן:** 2026-06-14 · **שלב:** אגף איסוף/תצוגה **חי** (M1–M4 collect); מנוע ההחלטה ממתין
 
 ## מה חי עכשיו
-- ✅ **Repo:** `projects5069-creator/ReboundPro` (פרטי). Sheet: `ReboundPro-Data` (משותף עם ה-SA `ridinghigh-sheets-v2@...`).
+- ✅ **Repo:** `projects5069-creator/ReboundPro` (פרטי). Sheet: `ReboundPro-Data` (משותף עם ה-SA `reboundpro-sheets@reboundpro-v1` — project GCP עצמאי `reboundpro-v1`, הופרד מ-RidingHigh ב-2026-06-15 לפתרון 429).
 - ✅ **EOD scanner** (`scanner.py`) — Finviz→רצפת-נזילות קשיחה→snapshot point-in-time + regime → `watchlist_live`; כותב גם `daily_summary` (בריאות-איסוף) + `fundamentals_snapshot` inline.
 - ✅ **Intraday scanner** (`intraday_scanner.py`) — כל ~10 דק' בשעות-שוק (guard `is_market_hours`), מסלול תוך-יומי (first-cross/intraday-low/recovery/reversal) עם dedup merge-by-key.
 - ✅ **Fundamentals** (`fundamentals.py`) — Finviz quote (~89 שדות) → `fundamentals_snapshot`, raw+`_num`, רמות primary/peripheral (config).
