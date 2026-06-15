@@ -492,6 +492,49 @@ def backfill_missing_context(dry_run=False):
     return out, len(targets)
 
 
+def backfill_missing_tags(dry_run=False):
+    """ONE-TIME: fill drop_kind + source for legacy watchlist rows (pre-M3.4) whose
+    drop_kind is blank. drop_kind -> "intraday_drop" (their original capture, and
+    what the dashboard coalesce already assumes). source -> kept if already set,
+    else inferred: "intraday" when an intraday-path field is present (first_cross_at
+    / scans_count), otherwise "eod_close" (the EOD scanner is the canonical daily
+    capture). Partial merge-safe upsert by (scan_date,ticker) — writes only these
+    two fields, never overwrites a row already tagged. Returns (rows, n_targets)."""
+    import sheets_manager as sm
+    wh, wd = sm.read_rows(config.SHEET_ID, config.TAB_WATCHLIST)
+    if not wd:
+        log.info("watchlist_live empty — nothing to tag.")
+        return [], 0
+    idx = {c: i for i, c in enumerate(wh)}
+    if not all(k in idx for k in ("scan_date", "ticker")):
+        log.error("watchlist_live missing scan_date/ticker columns.")
+        return [], 0
+
+    def val(r, c):
+        i = idx.get(c)
+        return r[i] if (i is not None and i < len(r)) else ""
+
+    out = []
+    for r in wd:
+        sd, tk = val(r, "scan_date"), val(r, "ticker")
+        if not sd or not tk:
+            continue
+        if val(r, "drop_kind") not in ("", None):
+            continue                          # already tagged — don't touch
+        src = val(r, "source")
+        if src in ("", None):                 # infer from intraday-path presence
+            has_path = bool(val(r, "first_cross_at") or val(r, "scans_count"))
+            src = "intraday" if has_path else "eod_close"
+        out.append({"scan_date": sd, "ticker": tk,
+                    "drop_kind": "intraday_drop", "source": src})
+    log.info("Tag backfill: %d watchlist rows missing drop_kind.", len(out))
+    if out and not dry_run:
+        upd, ins, tot = sm.upsert_by_key(config.SHEET_ID, config.TAB_WATCHLIST, HEADER,
+                                         out, ["scan_date", "ticker"])
+        log.info("Tag backfill written: %d rows updated (tab total %d).", upd, tot)
+    return out, len(out)
+
+
 def main():
     ap = argparse.ArgumentParser()
     ap.add_argument("--date", type=lambda s: datetime.strptime(s, "%Y-%m-%d").date(), default=None)
@@ -499,6 +542,9 @@ def main():
     ap.add_argument("--backfill-context", action="store_true",
                     help="ONE-TIME: fill descriptive context fields for existing "
                          "watchlist rows missing them (point-in-time). No scan.")
+    ap.add_argument("--backfill-tags", action="store_true",
+                    help="ONE-TIME: fill drop_kind/source for legacy rows missing "
+                         "them. No scan.")
     args = ap.parse_args()
 
     # one-time context backfill path (does NOT scan; not in the daily workflow)
@@ -513,6 +559,18 @@ def main():
         if out:
             import json
             print(json.dumps(out[0], indent=2, default=str, ensure_ascii=False))
+        return out
+
+    # one-time tag backfill (drop_kind/source for legacy rows) — no scan
+    if args.backfill_tags:
+        if not config.SHEET_ID:
+            log.error("No SHEET_ID configured — cannot backfill tags.")
+            return []
+        out, n = backfill_missing_tags(dry_run=args.dry_run)
+        mode = "DRY RUN" if args.dry_run else "WROTE"
+        print(f"\n--- BACKFILL TAGS ({mode}): {n} rows missing drop_kind ---")
+        for r in out:
+            print(f"  {r['scan_date']} {r['ticker']}: drop_kind={r['drop_kind']} source={r['source']}")
         return out
 
     scan_date = last_trading_day(args.date or date.today())
