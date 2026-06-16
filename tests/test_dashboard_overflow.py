@@ -184,6 +184,34 @@ def test_watchlist_split_drops_no_column(page, cols):
     assert not missing, f"{page}: columns dropped by the split: {missing}"
 
 
+def test_stock_card_shows_forward_daily_series(monkeypatch):
+    fd = pd.DataFrame([
+        {"scan_date": "2026-06-13", "ticker": "AAPL", "day_offset": 1, "date": "2026-06-16",
+         "close": 100, "cum_pct_from_ref": 2.0, "daily_change_pct": 2.0, "high_pct": 3, "low_pct": -1},
+        {"scan_date": "2026-06-13", "ticker": "AAPL", "day_offset": 2, "date": "2026-06-17",
+         "close": 98, "cum_pct_from_ref": -2.0, "daily_change_pct": -2.0, "high_pct": 1, "low_pct": -3},
+    ])
+    frames = dict(_FRAMES)
+    frames[config.TAB_FORWARD_DAILY] = fd
+
+    def fake_many(sid, specs):
+        out = {}
+        for t, num in specs.items():
+            df = frames.get(t, pd.DataFrame()).copy()
+            for c in num:
+                if c in df.columns:
+                    df[c] = pd.to_numeric(df[c], errors="coerce")
+            out[t] = df
+        return out
+
+    monkeypatch.setattr(common, "load_many", fake_many)
+    at = AppTest.from_file("pages/1_Intraday_Drop.py").run(timeout=30)
+    assert not at.exception, f"render raised: {at.exception}"
+    md = _all_markdown(at)
+    assert "מסלול יומי" in md, "forward_daily section header missing from Stock Card"
+    assert any("נאספו" in (m.label or "") for m in at.metric), "days-collected KPI missing"
+
+
 def test_watchlist_sort_selectbox_works():
     at = AppTest.from_file("pages/1_Intraday_Drop.py").run(timeout=30)
     sb = [s for s in at.selectbox if "מיין" in (s.label or "")]

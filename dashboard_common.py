@@ -48,6 +48,8 @@ NUM_POST = ["ref_close", "max_recovery_pct", "max_further_drop_pct",
 NUM_SUMMARY = ["total_finviz_candidates", "passed_floor", "below_min_price",
                "below_min_cap", "below_min_adv", "drop_below_threshold", "other_rejects"]
 NUM_TS = ["price", "pct_from_open", "volume"]
+NUM_FDAILY = ["day_offset", "close", "cum_pct_from_ref", "daily_change_pct",
+              "high_pct", "low_pct"]
 
 # ── cross-tab display formatting ─────────────────────────────────────────────
 # % sign in the cell · thousands separators · 2-decimal rounding (pandas Styler,
@@ -416,7 +418,7 @@ def _watchlist(watch, drop_kind, days):
         show_table(view[present], height=420)
 
 
-def _stock_card(watch, post, ts, fund, news):
+def _stock_card(watch, post, ts, fund, news, fdaily):
     st.subheader("🃏 כרטיס מניה")
     st.caption("תצוגה בלבד · מסלול תוך-יומי + תוצאות forward + תעודת-זהות פונדמנטלית + חדשות.")
     tickers = sorted(watch["ticker"].dropna().unique())
@@ -513,6 +515,27 @@ def _stock_card(watch, post, ts, fund, news):
                                      "max_recovery_pct": [row0[c] for _, c in sub]})
                 st.plotly_chart(px.bar(barf, x="window", y="max_recovery_pct",
                                        title="max recovery לפי תת-חלון (%)"), width="stretch")
+
+    # 2.5) forward_daily — per-day path D+1..D+N (cumulative + day-over-day)
+    hz = config.POST_ANALYSIS_HORIZON
+    st.markdown(f"**מסלול יומי D+1..D+{hz} (מצטבר מהכניסה + שינוי-יומי) — תיאורי, לא אות**")
+    fdc = (fdaily[(fdaily["ticker"] == sel_t) & (fdaily["scan_date"] == sel_d)]
+           if not fdaily.empty else fdaily)
+    if fdc.empty:
+        st.info(f"החלון טרם הבשיל — 0/{hz} ימים נאספו (יתמלא בריצות ה-EOD הבאות).")
+    else:
+        fdc = fdc.sort_values("day_offset")
+        ndays = len(fdc)
+        last_cum = fdc["cum_pct_from_ref"].iloc[-1]
+        mm = st.columns(2)
+        kpi(mm[0], "מצטבר נוכחי (מהכניסה)",
+            f"{last_cum:.2f}%" if pd.notna(last_cum) else "—")
+        kpi(mm[1], "ימים שנאספו", f"{ndays}/{hz}")
+        gg2 = st.columns(2)
+        gg2[0].plotly_chart(px.line(fdc, x="day_offset", y="cum_pct_from_ref", markers=True,
+                                    title="מצטבר מהכניסה (%) לפי D+n"), width="stretch")
+        gg2[1].plotly_chart(px.bar(fdc, x="day_offset", y="daily_change_pct",
+                                   title="שינוי יומי (%) לכל D+n"), width="stretch")
 
     # 3) fundamental ID card (Finviz-style, point-in-time) — raw values
     st.markdown("**תעודת זהות פונדמנטלית (Finviz, point-in-time)**")
@@ -648,11 +671,13 @@ def render(drop_kind, heading, blurb):
             config.TAB_WATCHLIST: NUM_WATCH, config.TAB_POST: NUM_POST,
             config.TAB_TIMESERIES: NUM_TS, config.TAB_FUNDAMENTALS: [],
             config.TAB_NEWS: [], config.TAB_SUMMARY: NUM_SUMMARY,
+            config.TAB_FORWARD_DAILY: NUM_FDAILY,
         })
         watch, post, ts = (data[config.TAB_WATCHLIST], data[config.TAB_POST],
                            data[config.TAB_TIMESERIES])
         fund, news, summ = (data[config.TAB_FUNDAMENTALS], data[config.TAB_NEWS],
                             data[config.TAB_SUMMARY])
+        fdaily = data[config.TAB_FORWARD_DAILY]
     except gspread.exceptions.APIError as e:
         (st.info(QUOTA_MSG) if _is_quota(e) else st.error(f"שגיאת קריאה מה-Sheet: {e}"))
         st.stop()
@@ -673,6 +698,7 @@ def render(drop_kind, heading, blurb):
     keys = set(zip(watch["scan_date"].astype(str), watch["ticker"].astype(str)))
     post, ts = restrict(post, keys), restrict(ts, keys)
     fund, news = restrict(fund, keys), restrict(news, keys)
+    fdaily = restrict(fdaily, keys)
 
     days = sorted(watch["scan_date"].dropna().unique())
     th, tw, tc, tp, tstat = st.tabs(
@@ -683,7 +709,7 @@ def render(drop_kind, heading, blurb):
     with tw:
         _watchlist(watch, drop_kind, days)
     with tc:
-        _stock_card(watch, post, ts, fund, news)
+        _stock_card(watch, post, ts, fund, news, fdaily)
     with tp:
         _post(post)
     with tstat:
