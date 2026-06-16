@@ -579,15 +579,38 @@ def _stock_card(watch, post, ts, fund, news, fdaily):
             f"{last_cum:.2f}%" if pd.notna(last_cum) else "—")
         kpi(mm[1], "ימים שנאספו", f"{ndays}/{hz}")
 
-        xlab = ["D+" + str(int(d)) for d in fdc["day_offset"]]   # discrete D+n axis
+        # real short dates on the x-axis (DD.MM); D0 = the entry/scan_date
+        def _short(d):
+            t = pd.to_datetime(d, errors="coerce")
+            return t.strftime("%d.%m") if pd.notna(t) else str(d)
+        dlab = [_short(d) for d in fdc["date"]]
+        d0lab = _short(sel_d)
+        cum = list(fdc["cum_pct_from_ref"])
+        dchg = list(fdc["daily_change_pct"])
+        YELLOW, BLUE = "#fbc02d", "#1f77b4"
         gg2 = st.columns(2)
-        figc = go.Figure(go.Scatter(x=xlab, y=fdc["cum_pct_from_ref"],
-                                    mode="lines+markers", line=dict(color="#1f77b4")))
-        plot(gg2[0], style_fig(figc, "מצטבר מהכניסה (%) לפי D+n", category=True, pct=True))
-        # daily change — bars coloured by sign (green ≥0 / red <0)
-        figd = go.Figure(go.Bar(x=xlab, y=fdc["daily_change_pct"],
-                                marker_color=sign_colors(fdc["daily_change_pct"])))
-        plot(gg2[1], style_fig(figd, "שינוי יומי (%) לכל D+n", category=True, pct=True))
+
+        # cumulative-from-entry line — D0 point (0%) yellow + enlarged at the left
+        cx, cy = [d0lab] + dlab, [0.0] + cum
+        ctext = ["0.0%"] + [f"{v:+.1f}%" if pd.notna(v) else "" for v in cum]
+        figc = go.Figure(go.Scatter(
+            x=cx, y=cy, mode="lines+markers+text", line=dict(color=BLUE),
+            text=ctext, textposition="top center",
+            marker=dict(color=[YELLOW] + [BLUE] * len(dlab), size=[13] + [7] * len(dlab))))
+        figc.add_annotation(x=d0lab, y=0, text="כניסה", showarrow=False, yshift=-20,
+                            font=dict(color=YELLOW, size=11))
+        plot(gg2[0], style_fig(figc, "מצטבר מהכניסה (%) — נקודת-כניסה צהובה",
+                               category=True, pct=True))
+
+        # daily change — D0 = reference (NO bar); other days green/red + value labels
+        bx, by = [d0lab] + dlab, [None] + dchg
+        btext = [""] + [f"{v:+.1f}%" if pd.notna(v) else "" for v in dchg]
+        figd = go.Figure(go.Bar(x=bx, y=by, marker_color=[YELLOW] + sign_colors(dchg),
+                                text=btext, textposition="outside"))
+        figd.add_annotation(x=d0lab, y=0, text="כניסה", showarrow=False,
+                            font=dict(color=YELLOW, size=11))
+        plot(gg2[1], style_fig(figd, "שינוי יומי (%) — D0=כניסה (ללא שינוי)",
+                               category=True, pct=True))
 
     # 3) fundamental ID card (Finviz-style, point-in-time) — raw values
     st.markdown("**תעודת זהות פונדמנטלית (Finviz, point-in-time)**")

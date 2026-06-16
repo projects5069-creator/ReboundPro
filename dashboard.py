@@ -15,9 +15,9 @@ totals, then "pick a page in the sidebar".
 Run locally:  streamlit run dashboard.py
 Streamlit Cloud entrypoint stays dashboard.py; pages/ is auto-discovered.
 """
-# Streamlit Cloud redeploy marker — 2026-06-16e (unified 'reboundpro' chart theme
-# across ALL 15 charts via plot()+px.defaults; modebar off; blue sub-window chart
-# removed). Bump to force a clean reboot dropping cached modules.
+# Streamlit Cloud redeploy marker — 2026-06-16f (forward_daily charts: real dates
+# on x-axis, % value labels, yellow D0 entry point/marker). Bump to force a clean
+# reboot dropping cached modules.
 import gspread
 import plotly.express as px
 import streamlit as st
