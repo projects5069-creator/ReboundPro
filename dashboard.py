@@ -15,9 +15,9 @@ totals, then "pick a page in the sidebar".
 Run locally:  streamlit run dashboard.py
 Streamlit Cloud entrypoint stays dashboard.py; pages/ is auto-discovered.
 """
-# Streamlit Cloud redeploy marker — 2026-06-16d (Stock Card forward_daily charts
-# restyled Investing-like: sign-colored daily bars, D+n discrete axis, zeroline,
-# clean template). Bump to force a clean reboot dropping cached modules.
+# Streamlit Cloud redeploy marker — 2026-06-16e (unified 'reboundpro' chart theme
+# across ALL 15 charts via plot()+px.defaults; modebar off; blue sub-window chart
+# removed). Bump to force a clean reboot dropping cached modules.
 import gspread
 import plotly.express as px
 import streamlit as st
@@ -69,11 +69,10 @@ st.info("בחר דף בסרגל הצד: **⚡ Intraday Drop** (צניחה חדה
 st.markdown("**פילוח לפי השערה (intraday_drop מול gradual_drop)**")
 kc = watch["drop_kind"].value_counts().reset_index()
 kc.columns = ["drop_kind", "count"]
-st.plotly_chart(px.bar(kc, x="drop_kind", y="count"), width="stretch")
+common.plot(st, px.bar(kc, x="drop_kind", y="count"))
 
 st.markdown("**מועמדים/יום לפי השערה (stacked)**")
 per_day = watch.groupby(["scan_date", "drop_kind"]).size().reset_index(name="candidates")
-st.plotly_chart(px.bar(per_day, x="scan_date", y="candidates", color="drop_kind"),
-                width="stretch")
+common.plot(st, px.bar(per_day, x="scan_date", y="candidates", color="drop_kind"))
 
 st.caption("ReboundPro · monitoring only · אין כאן לוגיקת מסחר.")

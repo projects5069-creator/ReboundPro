@@ -11,16 +11,67 @@ pages; they differ only by the drop_kind argument.
    recommendations. Those are M5 and await the M4 decision. Data-and-health viewer
    only. Collection infrastructure (Sheet + collectors) is shared and unchanged.
 """
+import copy
+import math
+
 import gspread
 import pandas as pd
 import plotly.express as px
 import plotly.graph_objects as go
+import plotly.io as pio
 import streamlit as st
 
 import config
 import sheets_manager as sm
 
 _is_quota = sm._is_quota_error   # 429 detector (shared with the read path)
+
+# ── unified chart theme (display-only) ───────────────────────────────────────
+# One registered template + px.defaults so EVERY chart (px.* across all pages)
+# inherits the same professional look: clean white, thin grey gridlines, bold
+# zeroline, consistent font/margins/colorway. plot() renders with the modebar off.
+GREEN, RED, GREY = "#26a69a", "#ef5350", "#cccccc"
+
+_RBP = copy.deepcopy(pio.templates["plotly_white"])
+_RBP.layout.font = dict(family="-apple-system, Segoe UI, Roboto, Arial", size=12)
+_RBP.layout.margin = dict(l=10, r=10, t=40, b=10)
+_RBP.layout.colorway = ["#1f77b4", GREEN, RED, "#7e57c2", "#ffa726", "#26c6da"]
+_RBP.layout.xaxis = dict(gridcolor="#eeeeee", gridwidth=1, zerolinecolor="#888888",
+                         zerolinewidth=1, showline=False)
+_RBP.layout.yaxis = dict(gridcolor="#eeeeee", gridwidth=1, zerolinecolor="#888888",
+                         zerolinewidth=1, showline=False)
+pio.templates["reboundpro"] = _RBP
+px.defaults.template = "reboundpro"
+
+
+def sign_colors(values):
+    """Per-value colour by sign for %-bars: >=0 green, <0 red, NaN/None grey."""
+    out = []
+    for v in values:
+        try:
+            f = float(v)
+            out.append(GREY if math.isnan(f) else (GREEN if f >= 0 else RED))
+        except (TypeError, ValueError):
+            out.append(GREY)
+    return out
+
+
+def style_fig(fig, title=None, category=False, pct=False):
+    """Per-figure tweaks on top of the template (go.* figures + axis types)."""
+    if title is not None:
+        fig.update_layout(title=title)
+    fig.update_layout(template="reboundpro", bargap=0.55)
+    if category:
+        fig.update_xaxes(type="category")
+    if pct:
+        fig.update_yaxes(ticksuffix="%")
+    return fig
+
+
+def plot(target, fig):
+    """Render a figure with the unified theme and NO floating modebar.
+    `target` is st or a column from st.columns()."""
+    target.plotly_chart(fig, width="stretch", config={"displayModeBar": False})
 
 # ── numeric coercion sets (per tab) ──────────────────────────────────────────
 NUM_WATCH = ["drop_pct_from_open", "close_pct_from_open", "pct_change_prevclose",
@@ -319,7 +370,7 @@ def _health(watch, post, summ, days):
 
     st.markdown("**מועמדים/יום שעברו את הרצפה הקשיחה**")
     per_day = watch.groupby("scan_date").size().reset_index(name="candidates")
-    st.plotly_chart(px.bar(per_day, x="scan_date", y="candidates"), width="stretch")
+    plot(st, px.bar(per_day, x="scan_date", y="candidates"))
 
     st.markdown("**טריות הדאטה (post_analysis סטטוס)**")
     if not post.empty and "status" in post.columns:
@@ -350,8 +401,8 @@ def _health(watch, post, summ, days):
         reject_cols = ["below_min_price", "below_min_cap", "below_min_adv", "drop_below_threshold"]
         melt = summ.melt(id_vars="scan_date", value_vars=reject_cols,
                          var_name="reason", value_name="count")
-        st.plotly_chart(px.bar(melt, x="scan_date", y="count", color="reason",
-                               title="דחיות לפי יום (stacked)"), width="stretch")
+        plot(st, px.bar(melt, x="scan_date", y="count", color="reason",
+                        title="דחיות לפי יום (stacked)"))
         show = ["scan_date", "total_finviz_candidates", "passed_floor"] + reject_cols + ["other_rejects"]
         show = [c for c in show if c in summ.columns]
         show_table(summ[show].sort_values("scan_date", ascending=False))
@@ -481,10 +532,10 @@ def _stock_card(watch, post, ts, fund, news, fdaily):
             tv["ts"] = pd.to_datetime(tv["timestamp"], errors="coerce")
             tv = tv.sort_values("ts")
             gg = st.columns(2)
-            gg[0].plotly_chart(px.line(tv, x="ts", y="price", markers=True,
-                                       title="price לאורך הזמן"), width="stretch")
-            gg[1].plotly_chart(px.line(tv, x="ts", y="pct_from_open", markers=True,
-                                       title="% מהפתיחה (אותו יום)"), width="stretch")
+            plot(gg[0], px.line(tv, x="ts", y="price", markers=True,
+                                title="price לאורך הזמן"))
+            plot(gg[1], px.line(tv, x="ts", y="pct_from_open", markers=True,
+                                title="% מהפתיחה (אותו יום)"))
             st.caption(f"{len(tv)} נקודות מעקב")
 
     # 2) forward outcomes (post_analysis)
@@ -508,14 +559,9 @@ def _stock_card(watch, post, ts, fund, news, fdaily):
                      "max_recovery_from_trough_pct", "last_close_pct", "dN_date"]
             pcols = [c for c in pcols if c in pvc.columns]
             show_table(pvc[pcols])
-            sub = [(w, f"max_recovery_{w}d") for w in config.POST_ANALYSIS_SUBWINDOWS
-                   if f"max_recovery_{w}d" in pvc.columns]
-            row0 = pvc.iloc[0]
-            if sub and any(pd.notna(row0[c]) for _, c in sub):
-                barf = pd.DataFrame({"window": [f"D+{w}" for w, _ in sub],
-                                     "max_recovery_pct": [row0[c] for _, c in sub]})
-                st.plotly_chart(px.bar(barf, x="window", y="max_recovery_pct",
-                                       title="max recovery לפי תת-חלון (%)"), width="stretch")
+            # (sub-window max-recovery bar chart removed — the per-day forward
+            #  path below supersedes it; the D+3/5/10/20 numbers stay in the
+            #  post table above.)
 
     # 2.5) forward_daily — per-day path D+1..D+N (cumulative + day-over-day)
     hz = config.POST_ANALYSIS_HORIZON
@@ -533,27 +579,15 @@ def _stock_card(watch, post, ts, fund, news, fdaily):
             f"{last_cum:.2f}%" if pd.notna(last_cum) else "—")
         kpi(mm[1], "ימים שנאספו", f"{ndays}/{hz}")
 
-        # discrete D+n x-labels (not a continuous 1.0/1.5/2.0 axis)
-        xlab = ["D+" + str(int(d)) for d in fdc["day_offset"]]
-        GREEN, RED, GREY, ZERO = "#26a69a", "#ef5350", "#cccccc", "#888888"
-
-        def _clean(fig, title):
-            fig.update_layout(template="plotly_white", title=title, bargap=0.55,
-                              showlegend=False, margin=dict(l=10, r=10, t=40, b=10))
-            fig.update_xaxes(type="category")
-            fig.update_yaxes(zeroline=True, zerolinecolor=ZERO, zerolinewidth=1, ticksuffix="%")
-            return fig
-
+        xlab = ["D+" + str(int(d)) for d in fdc["day_offset"]]   # discrete D+n axis
         gg2 = st.columns(2)
-        # cumulative-from-entry line
-        figc = go.Figure(go.Scatter(x=xlab, y=fdc["cum_pct_from_ref"], mode="lines+markers",
-                                    line=dict(color="#1f77b4")))
-        gg2[0].plotly_chart(_clean(figc, "מצטבר מהכניסה (%) לפי D+n"), width="stretch")
-        # daily change — bars colored by sign (Investing-style)
-        bar_colors = [GREEN if (pd.notna(v) and float(v) >= 0) else (RED if pd.notna(v) else GREY)
-                      for v in fdc["daily_change_pct"]]
-        figd = go.Figure(go.Bar(x=xlab, y=fdc["daily_change_pct"], marker_color=bar_colors))
-        gg2[1].plotly_chart(_clean(figd, "שינוי יומי (%) לכל D+n"), width="stretch")
+        figc = go.Figure(go.Scatter(x=xlab, y=fdc["cum_pct_from_ref"],
+                                    mode="lines+markers", line=dict(color="#1f77b4")))
+        plot(gg2[0], style_fig(figc, "מצטבר מהכניסה (%) לפי D+n", category=True, pct=True))
+        # daily change — bars coloured by sign (green ≥0 / red <0)
+        figd = go.Figure(go.Bar(x=xlab, y=fdc["daily_change_pct"],
+                                marker_color=sign_colors(fdc["daily_change_pct"])))
+        plot(gg2[1], style_fig(figd, "שינוי יומי (%) לכל D+n", category=True, pct=True))
 
     # 3) fundamental ID card (Finviz-style, point-in-time) — raw values
     st.markdown("**תעודת זהות פונדמנטלית (Finviz, point-in-time)**")
@@ -638,7 +672,7 @@ def _post(post):
         clean = matured
     if not clean.empty and clean["max_recovery_pct"].notna().any():
         st.markdown("**התפלגות max_recovery_pct (שורות נקיות שהבשילו) — תיאורי בלבד**")
-        st.plotly_chart(px.histogram(clean, x="max_recovery_pct", nbins=30), width="stretch")
+        plot(st, px.histogram(clean, x="max_recovery_pct", nbins=30))
 
 
 def _stats(watch, drop_kind):
@@ -648,25 +682,21 @@ def _stats(watch, drop_kind):
     if "liquidity_bucket" in watch:
         bc = watch["liquidity_bucket"].value_counts().reset_index()
         bc.columns = ["liquidity_bucket", "count"]
-        g[0].plotly_chart(px.bar(bc, x="liquidity_bucket", y="count", title="לפי דלי נזילות"),
-                          width="stretch")
+        plot(g[0], px.bar(bc, x="liquidity_bucket", y="count", title="לפי דלי נזילות"))
     if "market_regime" in watch:
         rc = watch["market_regime"].value_counts().reset_index()
         rc.columns = ["market_regime", "count"]
-        g[1].plotly_chart(px.bar(rc, x="market_regime", y="count", title="לפי משטר שוק"),
-                          width="stretch")
+        plot(g[1], px.bar(rc, x="market_regime", y="count", title="לפי משטר שוק"))
     g2 = st.columns(2)
     if "sector" in watch:
         scn = watch["sector"].value_counts().reset_index()
         scn.columns = ["sector", "count"]
-        g2[0].plotly_chart(px.bar(scn, x="count", y="sector", orientation="h", title="לפי סקטור"),
-                           width="stretch")
+        plot(g2[0], px.bar(scn, x="count", y="sector", orientation="h", title="לפי סקטור"))
     depth_col = "drop_pct_window" if drop_kind == "gradual_drop" else "drop_pct_from_open"
     depth_title = ("עומק ירידה 5-ימים (%)" if drop_kind == "gradual_drop"
                    else "עומק צניחה מהפתיחה (%)")
     if depth_col in watch and watch[depth_col].notna().any():
-        g2[1].plotly_chart(px.histogram(watch, x=depth_col, nbins=30, title=depth_title),
-                           width="stretch")
+        plot(g2[1], px.histogram(watch, x=depth_col, nbins=30, title=depth_title))
 
 
 # ── page orchestrator ────────────────────────────────────────────────────────
@@ -833,8 +863,7 @@ def render_system_health(sheet_id=None):
     dft = df.copy()
     dft["run_at_dt"] = pd.to_datetime(dft["run_at"].astype(str).str[:19], errors="coerce")
     dft["sev"] = dft["overall_status"].map(_SEV_NUM)
-    st.plotly_chart(px.line(dft, x="run_at_dt", y="sev", color="mode", markers=True),
-                    width="stretch")
+    plot(st, px.line(dft, x="run_at_dt", y="sev", color="mode", markers=True))
 
     # filterable history (newest first)
     st.markdown("**היסטוריית-ריצות**")
