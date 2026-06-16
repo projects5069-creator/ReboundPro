@@ -160,6 +160,18 @@ TAB_WATCHLIST = "watchlist_live"
 TAB_POST = "post_analysis"
 TAB_SUMMARY = "daily_summary"
 
+# forward_daily — per-event daily forward series (D+1..D+HORIZON), long format
+# (one row per scan_date/ticker/day_offset). Descriptive research data for M4
+# (per-day & cumulative path); NOT a signal. Keyed (scan_date, ticker, day_offset).
+TAB_FORWARD_DAILY = "forward_daily"
+FORWARD_DAILY_HEADER = [
+    "scan_date", "ticker", "day_offset", "date", "close",
+    "cum_pct_from_ref",      # (close / ref_close - 1) * 100  — cumulative from D0
+    "daily_change_pct",      # day-over-day (D+1 vs ref_close, then close-to-close)
+    "high_pct", "low_pct",   # intraday high/low of the day vs ref_close
+    "collected_at",
+]
+
 # health_log — the ONLY tab the health monitor WRITES (operational control log,
 # not research data). One row per monitor run; one column per check + overall.
 TAB_HEALTH_LOG = "health_log"

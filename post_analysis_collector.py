@@ -116,6 +116,29 @@ def classify_status(navail, exp, horizon, fwd_dates, expected_dates,
     return "ok" if navail == horizon else "partial"
 
 
+def daily_series(fwd, ref_close, scan_date, ticker):
+    """Per-day forward rows (D+1..D+navail) from the ALREADY-FETCHED `fwd` — no
+    extra yfinance call. cum_pct_from_ref = (close/ref-1)*100 (from D0);
+    daily_change_pct = D+1 vs ref_close, then close-to-close. Returns [] when
+    there is no forward data or no valid ref. Descriptive research data, not a
+    signal."""
+    if fwd is None or len(fwd) == 0 or not ref_close or ref_close <= 0:
+        return []
+    rows, prev = [], float(ref_close)
+    for i in range(len(fwd)):
+        c = float(fwd["Close"].iloc[i])
+        rows.append({
+            "scan_date": str(scan_date), "ticker": ticker, "day_offset": i + 1,
+            "date": str(fwd.index[i].date()), "close": round(c, 4),
+            "cum_pct_from_ref": round((c / ref_close - 1) * 100, 2),
+            "daily_change_pct": round((c / prev - 1) * 100, 2) if prev > 0 else "",
+            "high_pct": round((float(fwd["High"].iloc[i]) / ref_close - 1) * 100, 2),
+            "low_pct": round((float(fwd["Low"].iloc[i]) / ref_close - 1) * 100, 2),
+        })
+        prev = c
+    return rows
+
+
 def compute_outcome(ticker, scan_date, ref_close=None, horizon=None):
     """Forward outcome relative to ref_close (default = scan_date close)."""
     horizon = horizon or config.POST_ANALYSIS_HORIZON
@@ -207,7 +230,10 @@ def compute_outcome(ticker, scan_date, ref_close=None, horizon=None):
             HEADER[10]: touched_up, "day_touched_up": day_up,
             HEADER[12]: touched_dn, "day_touched_down": day_dn,
             "last_close_pct": round(float(closes.iloc[-1]), 2),
-            "dN_date": str(fwd.index[-1].date()), **sub, **trough, **shd}
+            "dN_date": str(fwd.index[-1].date()), **sub, **trough, **shd,
+            # ADDITIVE: per-day forward series (not in post HEADER → to_matrix
+            # ignores it; written separately to forward_daily). Reuses fwd above.
+            "_daily_rows": daily_series(fwd, ref_close, scan_date, ticker)}
 
 
 def to_matrix(rows):
@@ -219,6 +245,9 @@ def main():
     ap.add_argument("--dry-run", action="store_true")
     ap.add_argument("--selftest", nargs=2, metavar=("TICKER", "DATE"), default=None,
                     help="verify outcome math on a known (ticker, YYYY-MM-DD)")
+    ap.add_argument("--backfill-daily", action="store_true",
+                    help="populate forward_daily (D+1..D+N per-day series) for every "
+                         "watchlist event; writes ONLY forward_daily, not post_analysis")
     args = ap.parse_args()
 
     if args.selftest:
@@ -247,6 +276,21 @@ def main():
         rows.append(out)
         log.info("%s %s -> %s (rec=%s drop=%s)", sd, t, out["status"],
                  out.get("max_recovery_pct"), out.get("max_further_drop_pct"))
+
+    # forward_daily: per-day series for every event (reuses each outcome's
+    # already-computed _daily_rows — no extra yfinance fetch). Written ONLY under
+    # --backfill-daily for now (explicit, watchable); the normal run writes post.
+    if args.backfill_daily:
+        now = datetime.now(ET).strftime("%Y-%m-%d %H:%M:%S %Z")
+        daily = [{**d, "collected_at": now} for r in rows for d in r.get("_daily_rows", [])]
+        if args.dry_run:
+            print("\n--- DRY RUN: %d forward_daily rows (%d events) ---" % (len(daily), len(rows)))
+            return daily
+        u, i, t = sm.upsert_by_key(config.SHEET_ID, config.TAB_FORWARD_DAILY,
+                                   config.FORWARD_DAILY_HEADER, daily,
+                                   ["scan_date", "ticker", "day_offset"])
+        log.info("Wrote forward_daily: +%d new, %d updated (total %d).", i, u, t)
+        return daily
 
     if args.dry_run:
         print("\n--- DRY RUN: %d post_analysis rows ---" % len(rows))
