@@ -1,0 +1,45 @@
+ReboundPro — Session Journal
+============================
+יומן ברמת-סשן (תקציר-גבוה לכל יום-עבודה). הפירוט ה-granular של כל פעולה +
+commit hashes נמצא ב-docs/ACTIONS_LOG.md; מצב-נוכחי מלא ב-PROJECT_STATE.md.
+
+
+2026-06-16 — אירוע-מחיקה, שני תיקוני-באג, פיצ'ר forward_daily מקצה-לקצה, עיצוב-גרפים
+---------------------------------------------------------------------------------
+יום אינטנסיבי. ארבעה גושים:
+
+1. אירוע wipe (קריטי) → תוקן ושוחזר:
+   - טאב watchlist_live נמחק בבוקר (~14:20 UTC): ריצת-intraday עשתה ws.clear()
+     ואז ws.update() שקרס על float לא-JSON-תקין (NaN מטיקר delisted $LILKV) —
+     clear הצליח, update קרס → הטאב נשאר ריק.
+   - הוקפא intraday (gh workflow disable) → שוחזר מ-Google Sheets version-history
+     (Make-a-copy של גרסת 1:36 AM פרו → חילוץ + כתיבה-חזרה בטוחה, 72 שורות) →
+     re-enable. 6 הטאבים האחרים לא נפגעו.
+   - תיקון-שורש (TDD): sheets_manager._write_matrix — update-first בלי clear מקדים
+     + sanitize floats (inf/NaN→""). אומת-חי: $LILKV חזר בסריקה ונכתב נקי.
+
+2. באג over-flagging ב-post_analysis → תוקן:
+   - 72/72 שורות סומנו delisted_or_halted/partial_gap — false-positive תזמוני
+     (הקולקטור רץ פרה-מרקט; expected_forward_sessions ספר את הסשן-הנוכחי שטרם
+     נסגר → navail<exp). אומת ש-yfinance מחזיר forward תקין (ASTS).
+   - תיקון (TDD): completed_forward_sessions (סופר רק סשנים שנסגרו, session_close≤now)
+     + classify_status (forward_pending מול delisted אמיתי, grace=1). אומת-חי:
+     delisted 49→0 בטאב.
+
+3. פיצ'ר forward_daily (מקצה-לקצה, TDD):
+   - טאב חדש long (D+1..D+20 לכל אירוע: cum_pct_from_ref + daily_change_pct +
+     high/low). daily_series() טהורה, משתמשת מחדש ב-fwd שכבר נמשך (אפס fetch).
+   - מפתח additive _daily_rows ב-compute_outcome (לא נוגע ב-classify/post).
+   - backfill ידני: 81 שורות / 72 אירועים. חיווט-auto: ריצת-post הרגילה כותבת
+     forward_daily (post-first → forward_daily מבודד ב-try/except).
+
+4. עיצוב-דשבורד אחיד:
+   - תבנית reboundpro (15 גרפים דרך plot() wrapper, modebar off, קווי-רשת דקים,
+     ברים ירוק/אדום לפי-סימן). הגרף-הכחול (max-recovery תת-חלון) הוסר.
+   - כרטיס-המניה: מסלול forward_daily — תאריכים-אמיתיים בציר + תוויות-% +
+     נקודת-D0 צהובה (כניסה).
+
+סוף-יום: suite 46/46 · commit אחרון c1b0fc7 · redeploy-marker 2026-06-16f.
+ממתין-אימות-פסיבי: ריצת EOD ~21:30 UTC צריכה לכתוב forward_daily אוטומטית.
+תשתית: ReboundPro על project/SA עצמאי (reboundpro-v1) מאז 6/15 — אין עוד תחרות-מכסה.
+פירוט-פעולות granular: docs/ACTIONS_LOG.md (ערכי 2026-06-16).
