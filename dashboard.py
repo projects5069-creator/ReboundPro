@@ -15,9 +15,9 @@ totals, then "pick a page in the sidebar".
 Run locally:  streamlit run dashboard.py
 Streamlit Cloud entrypoint stays dashboard.py; pages/ is auto-discovered.
 """
-# Streamlit Cloud redeploy marker — 2026-06-16c (Stock Card: forward_daily
-# per-day path D+1..D+N — cumulative line + daily-change bar + days-collected).
-# Bump to force a clean reboot dropping cached modules.
+# Streamlit Cloud redeploy marker — 2026-06-16d (Stock Card forward_daily charts
+# restyled Investing-like: sign-colored daily bars, D+n discrete axis, zeroline,
+# clean template). Bump to force a clean reboot dropping cached modules.
 import gspread
 import plotly.express as px
 import streamlit as st

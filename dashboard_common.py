@@ -14,6 +14,7 @@ pages; they differ only by the drop_kind argument.
 import gspread
 import pandas as pd
 import plotly.express as px
+import plotly.graph_objects as go
 import streamlit as st
 
 import config
@@ -531,11 +532,28 @@ def _stock_card(watch, post, ts, fund, news, fdaily):
         kpi(mm[0], "מצטבר נוכחי (מהכניסה)",
             f"{last_cum:.2f}%" if pd.notna(last_cum) else "—")
         kpi(mm[1], "ימים שנאספו", f"{ndays}/{hz}")
+
+        # discrete D+n x-labels (not a continuous 1.0/1.5/2.0 axis)
+        xlab = ["D+" + str(int(d)) for d in fdc["day_offset"]]
+        GREEN, RED, GREY, ZERO = "#26a69a", "#ef5350", "#cccccc", "#888888"
+
+        def _clean(fig, title):
+            fig.update_layout(template="plotly_white", title=title, bargap=0.55,
+                              showlegend=False, margin=dict(l=10, r=10, t=40, b=10))
+            fig.update_xaxes(type="category")
+            fig.update_yaxes(zeroline=True, zerolinecolor=ZERO, zerolinewidth=1, ticksuffix="%")
+            return fig
+
         gg2 = st.columns(2)
-        gg2[0].plotly_chart(px.line(fdc, x="day_offset", y="cum_pct_from_ref", markers=True,
-                                    title="מצטבר מהכניסה (%) לפי D+n"), width="stretch")
-        gg2[1].plotly_chart(px.bar(fdc, x="day_offset", y="daily_change_pct",
-                                   title="שינוי יומי (%) לכל D+n"), width="stretch")
+        # cumulative-from-entry line
+        figc = go.Figure(go.Scatter(x=xlab, y=fdc["cum_pct_from_ref"], mode="lines+markers",
+                                    line=dict(color="#1f77b4")))
+        gg2[0].plotly_chart(_clean(figc, "מצטבר מהכניסה (%) לפי D+n"), width="stretch")
+        # daily change — bars colored by sign (Investing-style)
+        bar_colors = [GREEN if (pd.notna(v) and float(v) >= 0) else (RED if pd.notna(v) else GREY)
+                      for v in fdc["daily_change_pct"]]
+        figd = go.Figure(go.Bar(x=xlab, y=fdc["daily_change_pct"], marker_color=bar_colors))
+        gg2[1].plotly_chart(_clean(figd, "שינוי יומי (%) לכל D+n"), width="stretch")
 
     # 3) fundamental ID card (Finviz-style, point-in-time) — raw values
     st.markdown("**תעודת זהות פונדמנטלית (Finviz, point-in-time)**")
