@@ -240,6 +240,24 @@ def to_matrix(rows):
     return [[("" if r.get(c) is None else r.get(c)) for c in HEADER] for r in rows]
 
 
+def _build_daily(rows):
+    """Flatten every outcome's already-computed _daily_rows (+ collected_at) into
+    the forward_daily long rows. Reuses fetched data — no extra yfinance call."""
+    now = datetime.now(ET).strftime("%Y-%m-%d %H:%M:%S %Z")
+    return [{**d, "collected_at": now} for r in rows for d in r.get("_daily_rows", [])]
+
+
+def _write_forward_daily(sm, rows):
+    """Upsert the per-day forward series to forward_daily (keyed
+    scan_date/ticker/day_offset; atomic upsert; idempotent). Returns total rows."""
+    daily = _build_daily(rows)
+    upd, ins, tot = sm.upsert_by_key(config.SHEET_ID, config.TAB_FORWARD_DAILY,
+                                     config.FORWARD_DAILY_HEADER, daily,
+                                     ["scan_date", "ticker", "day_offset"])
+    log.info("Wrote forward_daily: +%d new, %d updated (total %d).", ins, upd, tot)
+    return tot
+
+
 def main():
     ap = argparse.ArgumentParser()
     ap.add_argument("--dry-run", action="store_true")
@@ -277,19 +295,14 @@ def main():
         log.info("%s %s -> %s (rec=%s drop=%s)", sd, t, out["status"],
                  out.get("max_recovery_pct"), out.get("max_further_drop_pct"))
 
-    # forward_daily: per-day series for every event (reuses each outcome's
-    # already-computed _daily_rows — no extra yfinance fetch). Written ONLY under
-    # --backfill-daily for now (explicit, watchable); the normal run writes post.
+    # --backfill-daily: write ONLY forward_daily (explicit one-off; reuses the
+    # already-computed _daily_rows — no extra fetch).
     if args.backfill_daily:
-        now = datetime.now(ET).strftime("%Y-%m-%d %H:%M:%S %Z")
-        daily = [{**d, "collected_at": now} for r in rows for d in r.get("_daily_rows", [])]
+        daily = _build_daily(rows)
         if args.dry_run:
             print("\n--- DRY RUN: %d forward_daily rows (%d events) ---" % (len(daily), len(rows)))
             return daily
-        u, i, t = sm.upsert_by_key(config.SHEET_ID, config.TAB_FORWARD_DAILY,
-                                   config.FORWARD_DAILY_HEADER, daily,
-                                   ["scan_date", "ticker", "day_offset"])
-        log.info("Wrote forward_daily: +%d new, %d updated (total %d).", i, u, t)
+        _write_forward_daily(sm, rows)
         return daily
 
     if args.dry_run:
@@ -298,8 +311,15 @@ def main():
         print("status breakdown:", dict(Counter(r["status"] for r in rows)))
         return rows
 
+    # post_analysis FIRST (the critical write).
     surv, new = sm.upsert_rows(config.SHEET_ID, config.TAB_POST, HEADER, to_matrix(rows))
     log.info("Wrote post_analysis: %d rows (kept %d historical).", new, surv)
+    # forward_daily SECOND, ISOLATED — post is already saved, so a forward_daily
+    # write failure is logged but never fails the run.
+    try:
+        _write_forward_daily(sm, rows)
+    except Exception as e:
+        log.error("forward_daily write failed (post_analysis already written): %s", e)
     return rows
 
 
