@@ -15,9 +15,8 @@ totals, then "pick a page in the sidebar".
 Run locally:  streamlit run dashboard.py
 Streamlit Cloud entrypoint stays dashboard.py; pages/ is auto-discovered.
 """
-# Streamlit Cloud redeploy marker — 2026-06-15c (watchlist split into 3 vertical
-# theme tables — readable, no compression; all columns kept). Bump to force a
-# clean reboot dropping cached modules.
+# Streamlit Cloud redeploy marker — 2026-06-16a (Collection-Health "pending" KPI
+# now counts forward_pending too). Bump to force a clean reboot dropping cached modules.
 import gspread
 import plotly.express as px
 import streamlit as st

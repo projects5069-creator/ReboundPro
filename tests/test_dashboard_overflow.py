@@ -182,3 +182,33 @@ def test_watchlist_split_drops_no_column(page, cols):
     # every displayed column present (by its short label or raw header)
     missing = [c for c in cols if common.SHORT_LABELS.get(c, c) not in md]
     assert not missing, f"{page}: columns dropped by the split: {missing}"
+
+
+# The Collection-Health "pending" KPI must count BOTH window-not-started
+# (pending_forward) AND recent-lag (forward_pending), else forward_pending rows
+# show in the table but vanish from the KPI tally.
+def test_health_pending_kpi_includes_forward_pending(monkeypatch):
+    base = _post()                          # full-schema ok row (AAPL@2026-06-13)
+    extra = base.iloc[[0, 0]].copy()
+    extra["status"] = ["pending_forward", "forward_pending"]
+    post = pd.concat([base, extra], ignore_index=True)   # 3 rows, all keyed to watch
+    frames = dict(_FRAMES)
+    frames[config.TAB_POST] = post
+
+    def fake_many(sid, specs):
+        out = {}
+        for t, num in specs.items():
+            df = frames.get(t, pd.DataFrame()).copy()
+            for c in num:
+                if c in df.columns:
+                    df[c] = pd.to_numeric(df[c], errors="coerce")
+            out[t] = df
+        return out
+
+    monkeypatch.setattr(common, "load_many", fake_many)
+    at = AppTest.from_file("pages/1_Intraday_Drop.py").run(timeout=30)
+    assert not at.exception, f"render raised: {at.exception}"
+    pend = [m for m in at.metric if "pending" in (m.label or "")]
+    assert pend, "pending KPI metric not found"
+    assert str(pend[0].value) == "2", \
+        f"pending KPI = {pend[0].value}, expected 2 (pending_forward + forward_pending)"

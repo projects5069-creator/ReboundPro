@@ -311,7 +311,8 @@ def _health(watch, post, summ, days):
     if not post.empty and "status" in post.columns:
         sc = st.columns(4)
         kpi(sc[0], "ok (חלון מלא)", int(post["status"].isin(["ok"]).sum()))
-        kpi(sc[1], "pending (טרם הבשיל)", int((post["status"] == "pending_forward").sum()))
+        kpi(sc[1], "pending (טרם הבשיל)",
+            int(post["status"].isin(["pending_forward", "forward_pending"]).sum()))
         kpi(sc[2], "partial / גאפ", int(post["status"].str.startswith("partial").sum()))
         kpi(sc[3], "halt / delisted", int((post["status"] == "delisted_or_halted").sum()))
         # contamination monitor — flagged split/halt rows (excluded from M4 aggregates)
