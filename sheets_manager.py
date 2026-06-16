@@ -5,6 +5,8 @@ Service-account auth (creds file at google_credentials.json). The SA cannot
 shared with the SA as Editor. Pattern mirrors DropsLab/gsheets_sync.
 """
 import json
+import math
+import numbers
 import os
 import time
 
@@ -81,6 +83,37 @@ def get_or_create_worksheet(ss, title, rows=2000, cols=40):
         return ss.add_worksheet(title=title, rows=rows, cols=cols)
 
 
+def _json_safe(v):
+    """inf/-inf/NaN/None -> "" (gspread's JSON serializer rejects out-of-range
+    floats; a delisted ticker can produce one and crash the whole write)."""
+    if v is None:
+        return ""
+    if isinstance(v, numbers.Real) and not isinstance(v, bool):
+        try:
+            if math.isnan(v) or math.isinf(v):
+                return ""
+        except (TypeError, ValueError):
+            pass
+    return v
+
+
+def _sanitize(values):
+    return [[_json_safe(c) for c in row] for row in values]
+
+
+def _write_matrix(ws, values, old_nrows):
+    """Safe replace: sanitize, then UPDATE-FIRST at A1 (no destructive clear),
+    blank-padding to cover the old row-extent so stale trailing rows are
+    overwritten. If update() raises, the old data is untouched (no wipe).
+    """
+    values = _sanitize(values)
+    ncols = max((len(r) for r in values), default=1)
+    pad = old_nrows - len(values)
+    if pad > 0:
+        values = values + [[""] * ncols for _ in range(pad)]
+    ws.update(range_name="A1", values=values)
+
+
 def upsert_rows(sheet_id, tab, header, rows, date_col="scan_date"):
     """Date-based upsert: drop existing rows whose date matches the batch, then
     rebuild header + surviving + new. One row per (ticker, date), re-run safe.
@@ -96,8 +129,7 @@ def upsert_rows(sheet_id, tab, header, rows, date_col="scan_date"):
     if existing and existing[0] == header:
         dci = header.index(date_col)
         surviving = [r for r in existing[1:] if r and r[dci] not in batch_dates]
-    ws.clear()
-    ws.update(range_name="A1", values=[header] + surviving + rows)
+    _write_matrix(ws, [header] + surviving + rows, old_nrows=len(existing))
     return len(surviving), len(rows)
 
 
@@ -138,8 +170,7 @@ def upsert_by_key(sheet_id, tab, header, new_dicts, key_cols):
 
     matrix = [[("" if merged[k].get(c) is None else merged[k].get(c)) for c in header]
               for k in order]
-    ws.clear()
-    ws.update(range_name="A1", values=[header] + matrix)
+    _write_matrix(ws, [header] + matrix, old_nrows=len(existing))
     return updated, inserted, len(order)
 
 
