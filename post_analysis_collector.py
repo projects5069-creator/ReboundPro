@@ -67,14 +67,53 @@ def detect_split_halt(fwd, ref_close, status):
     return False, "clean"
 
 
-def expected_forward_sessions(scan_date, horizon):
-    """How many trading sessions AFTER scan_date have already occurred (cap horizon)."""
+FORWARD_LAG_GRACE = 1   # tolerate the most-recent closed session lagging in yfinance
+
+
+def completed_forward_sessions(scan_date, horizon, now=None):
+    """Trading-session DATES after scan_date whose CLOSE has already passed
+    (capped at horizon). A session counts only once its close is in the past
+    relative to `now` — so a pre-market/intraday run never counts today's
+    not-yet-closed (and therefore not-yet-available) session."""
     nyse = ec.get_calendar("XNYS")
-    today = date.today()
-    if today <= scan_date:
-        return 0
-    sess = nyse.sessions_in_range(pd.Timestamp(scan_date + timedelta(days=1)), pd.Timestamp(today))
-    return min(len(sess), horizon)
+    now = now if now is not None else pd.Timestamp.now(tz="UTC")
+    start = pd.Timestamp(scan_date) + pd.Timedelta(days=1)
+    end = pd.Timestamp(now.date())
+    if start > end:
+        return []
+    closed = [s.date() for s in nyse.sessions_in_range(start, end)
+              if nyse.session_close(s) <= now]
+    return closed[:horizon]
+
+
+def expected_forward_sessions(scan_date, horizon, now=None):
+    """Count of COMPLETED forward sessions (cap horizon). See completed_forward_sessions."""
+    return len(completed_forward_sessions(scan_date, horizon, now))
+
+
+def classify_status(navail, exp, horizon, fwd_dates, expected_dates,
+                    grace=FORWARD_LAG_GRACE):
+    """Pure forward-status decision — distinguishes a recent data LAG
+    (forward_pending) from a real halt/delist GAP. `fwd_dates`/`expected_dates`
+    are sorted lists of date. A trailing shortfall within `grace` is just yfinance
+    lag; an INTERNAL hole (a closed session before the last available bar is
+    missing) or a larger shortfall is a real gap/halt."""
+    if navail == 0:
+        if exp == 0:
+            return "pending_forward"           # forward window not open yet
+        if exp <= grace:
+            return "forward_pending"           # only the latest closed session(s) lagging
+        return "delisted_or_halted"            # several closed sessions, zero data
+    avail = set(fwd_dates)
+    last_avail = fwd_dates[-1]
+    if any(d not in avail for d in expected_dates if d <= last_avail):
+        return "partial_gap_possible_halt"     # internal hole = real mid-window halt
+    shortfall = exp - navail
+    if shortfall > grace:
+        return "partial_gap_possible_halt"     # missing more than lag tolerance
+    if shortfall > 0:
+        return "forward_pending"               # only the most-recent <=grace lagging
+    return "ok" if navail == horizon else "partial"
 
 
 def compute_outcome(ticker, scan_date, ref_close=None, horizon=None):
@@ -97,12 +136,14 @@ def compute_outcome(ticker, scan_date, ref_close=None, horizon=None):
         ref_close = float(on_or_before["Close"].iloc[-1]) if len(on_or_before) else None
     fwd = h[h.index.date > scan_date].head(horizon)
 
-    exp = expected_forward_sessions(scan_date, horizon)
+    exp_dates = completed_forward_sessions(scan_date, horizon)
+    exp = len(exp_dates)
     navail = len(fwd)
+    fwd_dates = [d.date() for d in fwd.index]
+    status = classify_status(navail, exp, horizon, fwd_dates, exp_dates)
 
     # explicit halt / delisting / pending handling — never drop
     if navail == 0:
-        status = "pending_forward" if exp == 0 else "delisted_or_halted"
         halted = status == "delisted_or_halted"
         return {**base, "ref_close": round(ref_close, 2) if ref_close else "",
                 "status": status, "forward_days_available": 0,
@@ -116,12 +157,7 @@ def compute_outcome(ticker, scan_date, ref_close=None, horizon=None):
         return {**base, "ref_close": "", "status": "no_ref_close",
                 "forward_days_available": navail}
 
-    status = "ok" if navail >= exp and navail == horizon else (
-        "partial" if navail < horizon else "ok")
-    # if we got fewer than the sessions that already elapsed -> a gap (halt)
-    if navail < exp:
-        status = "partial_gap_possible_halt"
-
+    # status already decided by classify_status above (pending / gap / halt / partial / ok)
     highs = (fwd["High"] / ref_close - 1) * 100
     lows = (fwd["Low"] / ref_close - 1) * 100
     closes = (fwd["Close"] / ref_close - 1) * 100
