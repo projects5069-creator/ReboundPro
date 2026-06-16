@@ -151,7 +151,7 @@ def test_long_header_shortened_and_columns_preserved():
 # Every column that was displayed in the single wide watchlist table must still
 # appear after the theme-group split — split must reorganize, never drop.
 _INTRADAY_COLS = [
-    "scan_date", "ticker", "drop_kind", "exchange", "drop_pct_from_open", "price",
+    "scan_date", "ticker", "exchange", "drop_pct_from_open", "price",
     "liquidity_bucket", "sector", "market_regime", "drop_type", "adv_dollar",
     "market_cap", "rsi_14", "pct_from_52w_high", "pct_from_52w_low",
     "prior_decline_20d_pct", "prior_decline_60d_pct", "vix_level",
@@ -161,7 +161,7 @@ _INTRADAY_COLS = [
     "last_update_at",
 ]
 _GRADUAL_COLS = [
-    "scan_date", "ticker", "drop_kind", "exchange", "drop_pct_window", "price",
+    "scan_date", "ticker", "exchange", "drop_pct_window", "price",
     "liquidity_bucket", "sector", "market_regime", "drop_type", "adv_dollar",
     "market_cap", "rsi_14", "pct_from_52w_high", "pct_from_52w_low",
     "prior_decline_20d_pct", "prior_decline_60d_pct", "vix_level",
@@ -182,6 +182,16 @@ def test_watchlist_split_drops_no_column(page, cols):
     # every displayed column present (by its short label or raw header)
     missing = [c for c in cols if common.SHORT_LABELS.get(c, c) not in md]
     assert not missing, f"{page}: columns dropped by the split: {missing}"
+
+
+def test_watchlist_sort_selectbox_works():
+    at = AppTest.from_file("pages/1_Intraday_Drop.py").run(timeout=30)
+    sb = [s for s in at.selectbox if "מיין" in (s.label or "")]
+    assert sb, "'מיין לפי' sort selectbox missing"
+    sb[0].set_value("price")
+    at.run(timeout=30)
+    assert not at.exception, f"sort re-run raised: {at.exception}"
+    assert "rb-table" in _all_markdown(at), "theme tables vanished after sort change"
 
 
 # The Collection-Health "pending" KPI must count BOTH window-not-started

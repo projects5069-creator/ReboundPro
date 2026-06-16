@@ -217,6 +217,17 @@ def kpi(col, label, value):
     col.metric(label, value)
 
 
+# Shared "view-only" disclaimer + page header — keeps titles/captions consistent
+# across Home and the hypothesis pages (avoids per-page wording drift).
+VIEW_ONLY = "תצוגה בלבד · אין ניקוד/אותות/דירוג/המלצות (M5, ממתינים ל-M4)"
+
+
+def page_header(title, sub):
+    """Consistent page title (H1) + sub-caption used by every page."""
+    st.title(title)
+    st.caption(sub)
+
+
 def styled(df):
     """Format numeric columns for display (Styler keeps values numeric)."""
     fmt = {}
@@ -364,9 +375,11 @@ def _watchlist(watch, drop_kind, days):
     # view is sorted ONCE below so rows line up across the three tables (row N is the
     # same event everywhere). Every displayed column belongs to exactly one group;
     # drop_kind-specific columns simply filter out when absent (no column dropped).
+    # drop_kind is OMITTED from the tables — it is constant within a page (the page
+    # IS the hypothesis); it stays in the data and on the Home page. drop_type kept.
     GROUPS = [
         ("🪪 זיהוי + צניחה",
-         ["ticker", "scan_date", "exchange", "drop_kind",
+         ["ticker", "scan_date", "exchange",
           "drop_pct_from_open", "drop_pct_window", "price", "liquidity_bucket",
           "sector", "market_regime", "market_cap", "adv_dollar", "drop_type"]),
         ("📐 הקשר + מומנטום (תיאורי — לא אות-כניסה)",
@@ -379,9 +392,20 @@ def _watchlist(watch, drop_kind, days):
           "recovery_from_low_pct", "reversal_confirmed", "scans_count",
           "last_update_at", "lookback_trading_days", "ref_close_window"]),
     ]
-    sortcol = "drop_pct_window" if drop_kind == "gradual_drop" else "drop_pct_from_open"
+    # sort controls — applied ONCE to the shared view so the 3 theme tables stay
+    # row-aligned (row N is the same event in all three). Default = drop depth,
+    # ascending (deepest drop first), preserving the prior order.
+    depth_col = "drop_pct_window" if drop_kind == "gradual_drop" else "drop_pct_from_open"
+    sort_opts = [("עומק-צניחה", depth_col), ("price", "price"), ("rsi", "rsi_14"),
+                 ("market_cap", "market_cap"), ("rel-volume", "drop_day_rel_volume"),
+                 ("scan_date", "scan_date"), ("ticker", "ticker")]
+    sort_opts = [(lbl, c) for lbl, c in sort_opts if c in view.columns]
+    sb = st.columns([2, 1])
+    sel_sort = sb[0].selectbox("מיין לפי", [lbl for lbl, _ in sort_opts], index=0)
+    asc = sb[1].radio("סדר", ["יורד", "עולה"], index=1, horizontal=True) == "עולה"
+    sortcol = dict(sort_opts).get(sel_sort, "scan_date")
     sortcol = sortcol if sortcol in view.columns else "scan_date"
-    view = view.sort_values(sortcol)            # sort once → rows align across groups
+    view = view.sort_values(sortcol, ascending=asc, na_position="last")
     st.caption(f"{len(view)} שורות · מאורגן ל-טבלאות-נושא (ticker עוגן בכל אחת; "
                "אפס עמודה הושמטה)")
     for title, group_cols in GROUPS:
@@ -610,8 +634,7 @@ def render(drop_kind, heading, blurb):
 
     drop_kind: "intraday_drop" | "gradual_drop" (the page IS the filter).
     """
-    st.title(heading)
-    st.caption(blurb + " · תצוגה בלבד · אין ניקוד/אותות/דירוג/המלצות (M5, ממתינים ל-M4).")
+    page_header(heading, blurb + " · " + VIEW_ONLY)
 
     sheet_id = resolve_sheet_id()
     if not sheet_id:
@@ -733,9 +756,9 @@ def render_system_health(sheet_id=None):
     analysis of the collected data, and NOT edge."""
     if sheet_id is None:
         sheet_id = resolve_sheet_id()
-    st.title("🩺 System Health — היסטוריית בקרה")
-    st.caption("בקרה תפעולית בלבד — האם המערכת רצה / עובדת / מתועדת. "
-               "לא ניתוח-איכות של הנתונים עצמם, ולא edge (זה M4).")
+    page_header("🩺 System Health — היסטוריית בקרה",
+                "בקרה תפעולית בלבד — האם המערכת רצה / עובדת / מתועדת. "
+                "לא ניתוח-איכות של הנתונים עצמם, ולא edge (זה M4).")
     if not sheet_id:
         st.error("REBOUND_SHEET_ID לא מוגדר.")
         return

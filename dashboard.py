@@ -15,8 +15,9 @@ totals, then "pick a page in the sidebar".
 Run locally:  streamlit run dashboard.py
 Streamlit Cloud entrypoint stays dashboard.py; pages/ is auto-discovered.
 """
-# Streamlit Cloud redeploy marker — 2026-06-16a (Collection-Health "pending" KPI
-# now counts forward_pending too). Bump to force a clean reboot dropping cached modules.
+# Streamlit Cloud redeploy marker — 2026-06-16b (watchlist: drop_kind off the
+# per-page tables + "sort by" selectbox; unified Hebrew page headers). Bump to
+# force a clean reboot dropping cached modules.
 import gspread
 import plotly.express as px
 import streamlit as st
@@ -26,9 +27,8 @@ import dashboard_common as common
 
 common.setup_page("ReboundPro Monitor", "📉")
 
-st.title("📉 ReboundPro — Monitoring")
-st.caption("תצוגה בלבד · אין ניקוד / אותות / דירוג / המלצות (אלה M5, ממתינים להכרעת M4). "
-           "שתי השערות מופרדות לדפים בסרגל הצד.")
+common.page_header("📉 ReboundPro — ניטור",
+                   common.VIEW_ONLY + " · שתי השערות מופרדות לדפים בסרגל הצד.")
 
 sheet_id = common.resolve_sheet_id()
 if not sheet_id:
