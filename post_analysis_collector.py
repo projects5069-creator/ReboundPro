@@ -41,7 +41,37 @@ HEADER = [
   ] + [  # split/halt contamination detector (NON-DESTRUCTIVE flag for M4 exclusion)
     "split_halt_flag",                 # True if the forward window is contaminated
     "split_halt_reason",               # reverse_split_ratio | inter_day_jump | halt_gap | clean
+  ] + [  # hypothesis tags — carried from the watchlist event (NOT recomputed here).
+    "drop_kind",                       # intraday_drop | gradual_drop  (blank if unknown)
+    "source",                          # eod_close | gradual_eod | intraday  (blank if unknown)
   ]
+
+
+def _event_tags(row, idx):
+    """(drop_kind, source) for a watchlist row — the EXACT stored values, or ""
+    when absent/blank. NEVER defaults to intraday_drop: a blank->intraday default
+    would mislabel the gradual_drop rows that already exist downstream."""
+    def get(col):
+        i = idx.get(col)
+        if i is None or i >= len(row) or row[i] is None:
+            return ""
+        return str(row[i]).strip()
+    return get("drop_kind"), get("source")
+
+
+def _tag_existing(header, rows, tagmap):
+    """Pure backfill: map existing tab rows (under their own `header`) to dicts and
+    stamp drop_kind+source from `tagmap` keyed (scan_date, ticker). A row whose key
+    is not in tagmap keeps "" for both — never intraday_drop."""
+    hidx = {c: i for i, c in enumerate(header)}
+    out = []
+    for r in rows:
+        d = {c: (r[hidx[c]] if hidx[c] < len(r) else "") for c in header}
+        key = (str(d.get("scan_date", "")), str(d.get("ticker", "")).strip().upper())
+        dk, src = tagmap.get(key, ("", ""))
+        d["drop_kind"], d["source"] = dk, src
+        out.append(d)
+    return out
 
 
 def detect_split_halt(fwd, ref_close, status):
@@ -116,7 +146,7 @@ def classify_status(navail, exp, horizon, fwd_dates, expected_dates,
     return "ok" if navail == horizon else "partial"
 
 
-def daily_series(fwd, ref_close, scan_date, ticker):
+def daily_series(fwd, ref_close, scan_date, ticker, drop_kind="", source=""):
     """Per-day forward rows (D+1..D+navail) from the ALREADY-FETCHED `fwd` — no
     extra yfinance call. cum_pct_from_ref = (close/ref-1)*100 (from D0);
     daily_change_pct = D+1 vs ref_close, then close-to-close. Returns [] when
@@ -134,17 +164,21 @@ def daily_series(fwd, ref_close, scan_date, ticker):
             "daily_change_pct": round((c / prev - 1) * 100, 2) if prev > 0 else "",
             "high_pct": round((float(fwd["High"].iloc[i]) / ref_close - 1) * 100, 2),
             "low_pct": round((float(fwd["Low"].iloc[i]) / ref_close - 1) * 100, 2),
+            "drop_kind": drop_kind, "source": source,
         })
         prev = c
     return rows
 
 
-def compute_outcome(ticker, scan_date, ref_close=None, horizon=None):
-    """Forward outcome relative to ref_close (default = scan_date close)."""
+def compute_outcome(ticker, scan_date, ref_close=None, horizon=None,
+                    drop_kind="", source=""):
+    """Forward outcome relative to ref_close (default = scan_date close). drop_kind
+    and source are carried verbatim from the watchlist event onto the post row and
+    every per-day forward row (not recomputed here)."""
     horizon = horizon or config.POST_ANALYSIS_HORIZON
     now = datetime.now(ET).strftime("%Y-%m-%d %H:%M:%S %Z")
     base = {"scan_date": str(scan_date), "ticker": ticker, "horizon": horizon,
-            "collected_at": now}
+            "collected_at": now, "drop_kind": drop_kind, "source": source}
     try:
         h = yf.Ticker(ticker).history(
             start=str(scan_date - timedelta(days=10)),
@@ -233,7 +267,8 @@ def compute_outcome(ticker, scan_date, ref_close=None, horizon=None):
             "dN_date": str(fwd.index[-1].date()), **sub, **trough, **shd,
             # ADDITIVE: per-day forward series (not in post HEADER → to_matrix
             # ignores it; written separately to forward_daily). Reuses fwd above.
-            "_daily_rows": daily_series(fwd, ref_close, scan_date, ticker)}
+            "_daily_rows": daily_series(fwd, ref_close, scan_date, ticker,
+                                        drop_kind=drop_kind, source=source)}
 
 
 def to_matrix(rows):
@@ -258,6 +293,43 @@ def _write_forward_daily(sm, rows):
     return tot
 
 
+def _watchlist_tagmap(sm):
+    """Build {(scan_date, ticker): (drop_kind, source)} from watchlist_live — the
+    join source for backfilling existing post/forward_daily rows."""
+    wh, wd = sm.read_rows(config.SHEET_ID, config.TAB_WATCHLIST)
+    widx = {c: i for i, c in enumerate(wh)}
+    if "ticker" not in widx or "scan_date" not in widx:
+        return {}
+    out = {}
+    for r in wd:
+        if len(r) <= max(widx["ticker"], widx["scan_date"]):
+            continue
+        out[(str(r[widx["scan_date"]]), str(r[widx["ticker"]]).strip().upper())] = _event_tags(r, widx)
+    return out
+
+
+def backfill_tags(sm):
+    """One-off migration: stamp drop_kind+source onto EXISTING post_analysis +
+    forward_daily rows by joining to watchlist on (scan_date, ticker). Missing
+    match -> "" (never intraday_drop). Migration-safe upsert (merge-by-name)."""
+    tagmap = _watchlist_tagmap(sm)
+    log.info("Backfill tagmap from watchlist: %d (scan_date,ticker) keys.", len(tagmap))
+    for tab, hdr, keys in (
+        (config.TAB_POST, HEADER, ["scan_date", "ticker"]),
+        (config.TAB_FORWARD_DAILY, config.FORWARD_DAILY_HEADER,
+         ["scan_date", "ticker", "day_offset"]),
+    ):
+        h, rows = sm.read_rows(config.SHEET_ID, tab)
+        if not rows:
+            log.info("Backfill %s: empty, skipped.", tab)
+            continue
+        dicts = _tag_existing(h, rows, tagmap)
+        upd, ins, tot = sm.upsert_by_key(config.SHEET_ID, tab, hdr, dicts, keys)
+        blanks = sum(1 for d in dicts if not d["drop_kind"])
+        log.info("Backfill %s: %d rows tagged (%d updated), %d left blank (no watchlist match).",
+                 tab, tot, upd, blanks)
+
+
 def main():
     ap = argparse.ArgumentParser()
     ap.add_argument("--dry-run", action="store_true")
@@ -266,6 +338,9 @@ def main():
     ap.add_argument("--backfill-daily", action="store_true",
                     help="populate forward_daily (D+1..D+N per-day series) for every "
                          "watchlist event; writes ONLY forward_daily, not post_analysis")
+    ap.add_argument("--backfill-tags", action="store_true",
+                    help="one-off: stamp drop_kind+source onto EXISTING post_analysis + "
+                         "forward_daily rows via join to watchlist (no metric recompute)")
     args = ap.parse_args()
 
     if args.selftest:
@@ -280,6 +355,10 @@ def main():
         return []
 
     import sheets_manager as sm
+
+    if args.backfill_tags:
+        backfill_tags(sm)
+        return []
     header, data = sm.read_rows(config.SHEET_ID, config.TAB_WATCHLIST)
     if not data:
         log.info("watchlist_live empty — nothing to collect.")
@@ -290,7 +369,8 @@ def main():
         t = r[idx["ticker"]]
         sd = datetime.strptime(r[idx["scan_date"]], "%Y-%m-%d").date()
         ref = float(r[idx["price"]]) if r[idx["price"]] else None
-        out = compute_outcome(t, sd, ref_close=ref)
+        dk, src = _event_tags(r, idx)        # carry hypothesis tags from the watchlist event
+        out = compute_outcome(t, sd, ref_close=ref, drop_kind=dk, source=src)
         rows.append(out)
         log.info("%s %s -> %s (rec=%s drop=%s)", sd, t, out["status"],
                  out.get("max_recovery_pct"), out.get("max_further_drop_pct"))

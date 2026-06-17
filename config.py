@@ -170,6 +170,8 @@ FORWARD_DAILY_HEADER = [
     "daily_change_pct",      # day-over-day (D+1 vs ref_close, then close-to-close)
     "high_pct", "low_pct",   # intraday high/low of the day vs ref_close
     "collected_at",
+    "drop_kind",             # carried from watchlist (intraday_drop|gradual_drop) — hypothesis tag
+    "source",                # carried from watchlist (eod_close|gradual_eod|intraday)
 ]
 
 # health_log — the ONLY tab the health monitor WRITES (operational control log,
