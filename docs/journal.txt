@@ -4,18 +4,24 @@ ReboundPro — Session Journal
 commit hashes נמצא ב-docs/ACTIONS_LOG.md; מצב-נוכחי מלא ב-PROJECT_STATE.md.
 
 
-2026-06-17 — בדיקת-בוקר + תיעוד gradual_scanner (READ-ONLY → תיעוד בלבד)
-------------------------------------------------------------------------
+2026-06-17 — בדיקת-בוקר + תיעוד gradual_scanner + P1 (drop_kind+source downstream)
+----------------------------------------------------------------------------------
 בדיקת-בוקר מקיפה: מערכת מוכנה ליום (EOD אמש רץ ×2 success, forward_daily 81→95 נקי,
 watchlist 95×52 שלם, suite 46/46, workflows enabled). תיעוד gradual_scanner.py שרץ
 בפרודקשן (step ב-daily.yml מ-~14.6) אך לא היה מתועד:
 - מה: השערה נפרדת — close ≤ -10% מול D-5 ימי-מסחר, אותה רצפת-נזילות, drop_kind="gradual_drop".
   רץ בין scanner ל-catalyst (dedup same-day; news+forward מרימים). דה-דופ 20 ימי-מסחר.
 - פילוח חי: watchlist 46 intraday_drop / 49 gradual_drop · 0 כפילויות (אומת ב-join).
-- זוהו ל-backlog: (1) drop_kind לא מתפשט ל-post/forward/fundamentals — הפרדה רק ב-join,
-  שביר ל-wipe; (2) דה-דופ תלוי-סדר ללא guard/טסט (ל-gradual_scanner אין כיסוי טסטים).
-- תיקונים (P1: לשאת drop_kind ל-post+forward_daily; P2: guard+טסט) הוצגו — טרם בוצעו.
-עודכן: PROJECT_STATE.md (מה-חי + תזמון). אין שינוי קוד/Sheet/commit בסשן זה.
+- זוהו ל-backlog: (1) drop_kind לא נישא ל-post/forward — הפרדה רק ב-join, שביר ל-wipe;
+  (2) דה-דופ תלוי-סדר ללא guard/טסט (ל-gradual_scanner אין כיסוי טסטים).
+- ✅ P1 בוצע (commit a8ab776, TDD): drop_kind+source נישאים כעת ל-post_analysis ול-forward_daily
+  (going-forward דרך _event_tags ב-main → compute_outcome → daily_series; backfill חד-פעמי
+  --backfill-tags ל-join מ-watchlist, fallback ריק לעולם-לא-intraday). backfill הורץ חי ואומת:
+  post 31→33 עמ' 46/49, forward_daily 10→12 עמ' 57/38, 0 ריקים, ספירת-שורות ללא שינוי. suite 52/52.
+  פותר את backlog (1) — fundamentals עדיין ללא תג (לא נדרש כרגע).
+- ⬜ נותר ב-backlog: P2 (guard נגד דריסת intraday + טסט ראשון ל-gradual_scanner).
+עודכן הסשן: PROJECT_STATE.md, journal; קוד config.py+post_analysis_collector.py+טסט חדש;
+Sheet (backfill חי); commits 3f529a8 (docs) + a8ab776 (feat) + commit-תיעוד זה.
 
 
 2026-06-16 — אירוע-מחיקה, שני תיקוני-באג, פיצ'ר forward_daily מקצה-לקצה, עיצוב-גרפים
