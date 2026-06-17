@@ -71,6 +71,7 @@ jobs:
           python health_monitor.py ${{ steps.mode.outputs.flag }} | tee /tmp/health.txt
           code=${PIPESTATUS[0]}
           set -e
+          echo "HEALTH_RAN=1" >> "$GITHUB_ENV"   # python produced a verdict -> health DID run (drives the dead-man heartbeat)
           {
             echo "### 🩺 Health monitor \`${{ steps.mode.outputs.flag }}\` — exit=$code"
             echo ""
@@ -88,3 +89,21 @@ jobs:
       - name: Remove credentials
         if: always()
         run: rm -f google_credentials.json
+
+      # Dead-man heartbeat (healthchecks.io) — the watcher-of-the-watcher. Pings
+      # ONLY when health actually ran (HEALTH_RAN=1), regardless of its verdict: a
+      # FAIL verdict already emails via exit=2, so this check is purely "did health
+      # execute?". If the job dies before python runs (deps/checkout) HEALTH_RAN is
+      # unset -> no ping -> healthchecks.io alerts after grace. GUARDED on HC_URL so
+      # it is safe to commit before the check + secret exist.
+      - name: Heartbeat (healthchecks.io dead-man)
+        if: always()
+        env:
+          HC_URL: ${{ secrets.HC_PING_HEALTH }}
+        run: |
+          if [ -z "$HC_URL" ]; then echo "HC_PING_HEALTH unset — skipping heartbeat."; exit 0; fi
+          if [ "$HEALTH_RAN" = "1" ]; then
+            curl -fsS -m 10 --retry 3 "$HC_URL" && echo "heartbeat OK (health ran)"
+          else
+            echo "health did not run (HEALTH_RAN unset) — no ping; dead-man will fire after grace."
+          fi

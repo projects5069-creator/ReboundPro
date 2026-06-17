@@ -23,7 +23,7 @@
 - **תיקון over-flagging** (post): `completed_forward_sessions` (סופר רק סשנים שנסגרו) + `classify_status` (forward_pending מול delisted אמיתי). false-positive **49→0** (אומת-חי).
 - **דשבורד — תבנית `reboundpro` אחידה:** 15 גרפים דרך `plot()` wrapper (modebar off), קווי-רשת דקים, ברים ירוק/אדום (sign), הגרף הכחול (תת-חלון) הוסר. כרטיס-המניה: מסלול forward_daily עם תאריכים-אמיתיים + תוויות-% + נקודת-D0 צהובה.
 - **טסטים:** 46/46 · **commit אחרון:** `c1b0fc7` · **redeploy-marker:** 2026-06-16f.
-- **🟡 פתוח/דחוי:** healthchecks.io heartbeat (intraday-WARN-ללא-מייל + dead-man gap); יישור daily-timing (pinger 21:30 מול cron 22:30 UTC); תזמון post (לא פרה-מרקט); הסרת ה-SA הישן של RidingHigh מה-Sheet (אחרי תקופת-יציבות).
+- **🟡 פתוח/דחוי:** **dead-man חיצוני** (healthchecks.io ל-daily+health) — קוד ה-heartbeat ב-workflows **בוצע** (מוגן ב-secret; ראה MONITORING.md §Dead-man), **נותרה הקמת-UI חיצונית**: 2 checks + secrets `HC_PING_DAILY`/`HC_PING_HEALTH` (צ'קליסט ב-MONITORING.md). עתידי: **H3** intraday-WARN-ללא-מייל (escalation סטייטפולי), dead-man ל-intraday. שאר פתוחים: תזמון post (לא פרה-מרקט); הסרת ה-SA הישן של RidingHigh מה-Sheet (אחרי תקופת-יציבות).
 - **⏳ ממתין-אימות-פסיבי:** ריצת EOD הערב (~21:30 UTC) צריכה לכתוב `forward_daily` אוטומטית — זה האימות-החי של החיווט-auto (forward_daily יגדל מ-81; offsets חדשים שהבשילו).
 
 ## ממתין (M5 — לא לבנות עד הכרעת M4)

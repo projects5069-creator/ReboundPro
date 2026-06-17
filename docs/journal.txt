@@ -20,8 +20,16 @@ watchlist 95×52 שלם, suite 46/46, workflows enabled). תיעוד gradual_sca
   post 31→33 עמ' 46/49, forward_daily 10→12 עמ' 57/38, 0 ריקים, ספירת-שורות ללא שינוי. suite 52/52.
   פותר את backlog (1) — fundamentals עדיין ללא תג (לא נדרש כרגע).
 - ⬜ נותר ב-backlog: P2 (guard נגד דריסת intraday + טסט ראשון ל-gradual_scanner).
+- ✅ ניטור-כשל (סבב 1) — תוכנן (READ-ONLY) + מומש: dead-man חיצוני (healthchecks.io) ל-daily+health.
+  חקירה: מצב-B (דאטה נשבר) כבר מכוסה ע"י health_monitor+atomic-write; מצב-A חשוף ב-H1 (pinger מת)
+  ו-H2 (health עצמו לא רץ). אומת אי-אמינות cron נייטיב (daily→00:12, health ירה 06:19/20:36, עד +5h).
+  מומש: step heartbeat מוגן (curl hc-ping) בסוף daily.yml+health.yml — guard מדלג כשה-secret חסר
+  (בטוח לקמט לפני הקמה חיצונית); daily=success/fail, health=success כש-HEALTH_RAN=1. grace מכויל
+  ל-pinger האמין (2h), לא ל-5h. YAML אומת parse נקי. H3 (WARN-email) + intraday-dead-man = עתידי.
+  נותר למשתמש: הקמת 2 checks ב-hc + secrets HC_PING_DAILY/HC_PING_HEALTH (צ'קליסט ב-MONITORING.md).
 עודכן הסשן: PROJECT_STATE.md, journal; קוד config.py+post_analysis_collector.py+טסט חדש;
 Sheet (backfill חי); commits 3f529a8 (docs) + a8ab776 (feat) + commit-תיעוד זה.
+ניטור: daily.yml+health.yml (heartbeat) + MONITORING.md (§Dead-man) + PROJECT_STATE (backlog).
 
 
 2026-06-16 — אירוע-מחיקה, שני תיקוני-באג, פיצ'ר forward_daily מקצה-לקצה, עיצוב-גרפים

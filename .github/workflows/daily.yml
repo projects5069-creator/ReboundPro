@@ -61,3 +61,20 @@ jobs:
       - name: Remove credentials
         if: always()
         run: rm -f google_credentials.json
+
+      # Dead-man heartbeat (healthchecks.io). Pings hc-ping.com so an external
+      # watcher alerts when this collector STOPS running (cron-job.org pinger dead /
+      # workflow disabled / GitHub cron skipped) — a "run never happened" that emits
+      # no GitHub failure email. GUARDED: skips silently if HC_URL is unset, so this
+      # is safe to commit before the healthchecks.io check + secret exist.
+      - name: Heartbeat (healthchecks.io dead-man)
+        if: always()
+        env:
+          HC_URL: ${{ secrets.HC_PING_DAILY }}
+        run: |
+          if [ -z "$HC_URL" ]; then echo "HC_PING_DAILY unset — skipping heartbeat."; exit 0; fi
+          if [ "${{ job.status }}" = "success" ]; then
+            curl -fsS -m 10 --retry 3 "$HC_URL"      && echo "heartbeat OK"
+          else
+            curl -fsS -m 10 --retry 3 "$HC_URL/fail" && echo "heartbeat /fail sent"
+          fi

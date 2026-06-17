@@ -67,6 +67,34 @@ uv run ... python health_monitor.py
 - **Body (post-close→`evening`):** `{"ref":"main","inputs":{"mode":"morning"}}`
 - **DOW של ה-01:00 = 2-6** (שלישי–שבת UTC) — אותו היגיון כמו ה-cron: `01:00 UTC` של יום X = `21:00 ET` של X-1, כדי לכסות מסחר שני–שישי.
 
+## Dead-man חיצוני (healthchecks.io) — "ריצה לא קרתה כלל"
+
+המוניטור הפנימי תופס **"ריצה קרתה אך הדאטה נשבר"** (מצב B). אבל **"ריצה לא קרתה כלל"** (מצב A —
+ה-pinger ב-cron-job.org מת / workflow disabled / cron נייטיב דילג) שקט: אין ריצה → אין מייל-כשל,
+וגם המוניטור עצמו לא ירוץ כדי להתריע. לכן יש שכבת **dead-man חיצונית** שיושבת *מעל* cron-job.org:
+כל workflow מבצע `curl` ל-`hc-ping.com/<uuid>` בהצלחה; healthchecks.io שולח מייל כש-ping מאחר מעבר
+ל-grace. זה תופס H1 (pinger מת) ו-H2 (המוניטור עצמו לא רץ — dead-man על `health` הוא השומר-של-השומר).
+
+| check | hc schedule (cron, UTC) | grace | מה מפנג | secret |
+|-------|-------------------------|-------|---------|--------|
+| `reboundpro-daily`  | `30 21 * * 1-5` | **2h** | סוף `daily.yml`: success אם האיסוף הצליח, `/fail` אם התרסק | `HC_PING_DAILY` |
+| `reboundpro-health` | `0 13 * * 1-5`  | **2h** | סוף `health.yml`: success כש-`HEALTH_RAN=1` (= ה-python רץ והפיק verdict, גם אם FAIL) | `HC_PING_HEALTH` |
+
+- **כיול grace:** ל-זמני-ה-pinger **האמינים** (daily 21:30, health-בוקר 13:00) + משך-ריצה — **לא** ל-5h הדריפט של ה-cron הנייטיב. כך מוות-pinger בולט ולא נְמַסֶּה ע"י backup איטי. שני ה-checks weekdays-UTC בלבד → אפס התראות-שווא בסופ"ש/חג (ה-pings של health 17:30/00:00 רק מאפסים "up").
+- **ה-step מוגן:** אם ה-secret ריק/חסר → מדלג בשקט ונשאר ירוק (אפשר לקמט לפני ההגדרה החיצונית).
+- **כנות-כיסוי:** תופס "אף טריגר לא הפיק ping בתוך schedule+grace" (ה-miss הקטסטרופלי). אם ה-pinger מת אך ה-cron הנייטיב עוד יורה בדריפט — ייתכן ping מאוחר → hc יסמן down→up (flapping), וזה עצמו אות ש"ה-pinger לא אמין". כשל-טוטאלי מתמשך **תמיד** יתריע. **לא** מכסה מצב B (מכוסה ע"י 10 הבדיקות) ולא intraday (מחוץ ל-scope; עתידי).
+
+### צ'קליסט הקמה ב-healthchecks.io (פעם אחת, UI)
+1. חשבון חינם ב-https://healthchecks.io.
+2. **Add Check** `reboundpro-daily` → Schedule=**Cron** `30 21 * * 1-5` · Timezone=**UTC** · **Grace 2h**.
+3. **Add Check** `reboundpro-health` → Cron `0 13 * * 1-5` · UTC · **Grace 2h**.
+4. Notification = **Email** → `amihay.levy@gmail.com`.
+5. העתק את שני ה-ping-URLs (`https://hc-ping.com/<uuid>`).
+6. GitHub → repo **Settings → Secrets and variables → Actions → New repository secret**: `HC_PING_DAILY`, `HC_PING_HEALTH`.
+7. הרץ ידנית כל workflow → ודא שה-check נצבע ירוק ב-hc; `curl "$URL/fail"` → ודא שמייל-ההתראה מגיע.
+
+> **עתידי (לא בסבב זה):** (1) **H3** — escalation סטייטפולי ב-health_monitor כך ש-WARN מתמשך (כמו intraday-WARN) ישלח מייל על מעבר WARN↔OK, בלי הצפה 3×/יום. (2) **intraday-rollup** — dead-man יומי "intraday רץ לפחות פעם היום".
+
 ## 10 הבדיקות (5 עמודי-ניטור)
 
 ### עמוד טריות (Freshness)
