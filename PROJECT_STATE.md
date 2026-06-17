@@ -23,8 +23,9 @@
 - **תיקון over-flagging** (post): `completed_forward_sessions` (סופר רק סשנים שנסגרו) + `classify_status` (forward_pending מול delisted אמיתי). false-positive **49→0** (אומת-חי).
 - **דשבורד — תבנית `reboundpro` אחידה:** 15 גרפים דרך `plot()` wrapper (modebar off), קווי-רשת דקים, ברים ירוק/אדום (sign), הגרף הכחול (תת-חלון) הוסר. כרטיס-המניה: מסלול forward_daily עם תאריכים-אמיתיים + תוויות-% + נקודת-D0 צהובה.
 - **טסטים:** 46/46 · **commit אחרון:** `c1b0fc7` · **redeploy-marker:** 2026-06-16f.
-- **🟡 פתוח/דחוי:** **dead-man חיצוני** (healthchecks.io ל-daily+health) — קוד ה-heartbeat ב-workflows **בוצע** (מוגן ב-secret; ראה MONITORING.md §Dead-man), **נותרה הקמת-UI חיצונית**: 2 checks + secrets `HC_PING_DAILY`/`HC_PING_HEALTH` (צ'קליסט ב-MONITORING.md). עתידי: **H3** intraday-WARN-ללא-מייל (escalation סטייטפולי), dead-man ל-intraday. שאר פתוחים: תזמון post (לא פרה-מרקט); הסרת ה-SA הישן של RidingHigh מה-Sheet (אחרי תקופת-יציבות).
-- **⏳ ממתין-אימות-פסיבי:** ריצת EOD הערב (~21:30 UTC) צריכה לכתוב `forward_daily` אוטומטית — זה האימות-החי של החיווט-auto (forward_daily יגדל מ-81; offsets חדשים שהבשילו).
+- **✅ dead-man חיצוני — LIVE** (healthchecks.io ל-daily+health; קוד 20b8344, ראה MONITORING.md §Dead-man): 2 checks מוגדרים (`reboundpro-daily` cron `30 21 * * 1-5` grace 2h · `reboundpro-health` cron `0 13 * * 1-5` grace 2h) + 2 secrets (`HC_PING_DAILY`/`HC_PING_HEALTH`) מוגדרים. **`reboundpro-health` אומת end-to-end** (ping #18 על 20b8344 ירוק — "heartbeat OK (health ran)" + מייל DOWN בבדיקת `/fail`). **`reboundpro-daily`** מוגדר; ה-ping החי הראשון צפוי ב-EOD 21:30 UTC.
+- **🟡 פתוח/דחוי:** **H3** intraday-WARN-ללא-מייל (escalation סטייטפולי ב-health_monitor); **intraday-rollup** dead-man יומי; **P2** (guard נגד דריסת intraday + טסטים ל-gradual_scanner); pytest ב-.venv; יישור cron/pinger (daily 21:30 מול 22:30); תזמון post (לא פרה-מרקט); הסרת ה-SA הישן של RidingHigh מה-Sheet.
+- **✅ אומת הבוקר:** auto-wiring של `forward_daily` בריצת EOD של אמש — נכתב אוטומטית, **81→95 שורות נקיות** (offsets חדשים שהבשילו). האימות-הפסיבי שהמתין — אושר.
 
 ## ממתין (M5 — לא לבנות עד הכרעת M4)
 - ⬜ Phase 0 / harness לבדיקת יתרון נטו (ראה ביקורת ב-`docs/`); הכרעת go/no-go.

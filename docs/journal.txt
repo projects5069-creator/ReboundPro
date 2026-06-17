@@ -31,6 +31,19 @@ watchlist 95×52 שלם, suite 46/46, workflows enabled). תיעוד gradual_sca
 Sheet (backfill חי); commits 3f529a8 (docs) + a8ab776 (feat) + commit-תיעוד זה.
 ניטור: daily.yml+health.yml (heartbeat) + MONITORING.md (§Dead-man) + PROJECT_STATE (backlog).
 
+— סגירת-יום 2026-06-17 (סיכום) —
+(א) אומת auto-wiring של forward_daily בריצת-EOD של אמש: נכתב אוטומטית, 81→95 שורות נקיות.
+(ב) gradual_scanner תועד (commit 3f529a8) — השערה נפרדת, פילוח חי 46 intraday / 49 gradual.
+(ג) P1 — drop_kind+source נישאים ל-post ול-forward_daily (commit a8ab776, TDD); backfill חי
+    אומת 46/49, 0 ריקים, suite 52/52.
+(ד) dead-man heartbeat ל-daily+health (commit 20b8344) — מומש, **הוקם ואומת end-to-end היום**:
+    2 checks ב-healthchecks.io + 2 secrets (HC_PING_DAILY/HC_PING_HEALTH); reboundpro-health LIVE
+    (ping #18 על 20b8344 ירוק + מייל DOWN ב-/fail); reboundpro-daily מוגדר, ping ראשון צפוי EOD 21:30.
+מצב-יום: intraday 17/17 ריצות נקיות (0 מועמדי-intraday חדשים — שוק שקט), health כל היום healthy.
+backlog פתוח: H3 (WARN escalation), intraday-rollup, P2 (guard+טסטים ל-gradual_scanner),
+pytest ב-.venv, יישור cron/pinger (daily 21:30 מול 22:30).
+docs-sync זה: commit "docs: dead-man live (checks+secrets verified e2e); close 2026-06-17 session".
+
 
 2026-06-16 — אירוע-מחיקה, שני תיקוני-באג, פיצ'ר forward_daily מקצה-לקצה, עיצוב-גרפים
 ---------------------------------------------------------------------------------
