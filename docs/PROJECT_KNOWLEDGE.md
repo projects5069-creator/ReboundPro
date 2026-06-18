@@ -39,7 +39,7 @@
 - `intraday.yml` — `*/10 13-21 * * 1-5` UTC (baseline) + `workflow_dispatch`. הטריגר האמין: **cron-job.org** → workflow_dispatch (America/New_York 9–16, כל 10ד'); ה-guard `is_market_hours()` הוא רשת-ביטחון. שני צעדים: `intraday_scanner.py` ואז `intraday_timeseries.py` (מעקב מדורג).
 
 ## Dashboard
-Streamlit Cloud, נפרס מ-`dashboard.py` (branch `main`). Cloud מתקין מ-`uv.lock`. *(URL: למלא לאחר אישור הפריסה ב-share.streamlit.io עבור `projects5069-creator/ReboundPro`.)*
+Streamlit Cloud, נפרס מ-`dashboard.py` (branch `main`). Cloud מתקין מ-`uv.lock`. **URL חי:** https://reboundpro-4zkxnuulodjqdgtnffyaqz.streamlit.app (אומת נגיש 2026-06-18, HTTP 303 — redirect wakeup של Streamlit Cloud).
 - **Multipage (M3.5):** entrypoint `dashboard.py` = דף-בית; שני דפי-השערה ב-`pages/` (ניווט sidebar אוטומטי) — **⚡ Intraday Drop** ו-**🐢 Gradual Drop**. כל דף מציג את הסט המלא של 5 הלשוניות **מסונן מראש ל-drop_kind אחד** (הדף עצמו הוא הפילטר; אין multiselect של drop_kind). post/ts/fund/news מוגבלים למפתחות (scan_date,ticker) של אותו דף.
 - **5 לשוניות (בכל דף):** Collection Health · Watchlist · Stock Card (intraday_timeseries + post_analysis + תעודת-זהות Finviz + חדשות) · Post-Analysis · Descriptive Stats. הכל view-only.
 - **תיקוני-תצוגה:** helper `styled()` (pandas Styler) — `%` בתא, פסיקי-אלפים, עיגול 2-ספרות. תשתית-איסוף משותפת (אותו Sheet, אותם collectors) — רק התצוגה מפוצלת.
