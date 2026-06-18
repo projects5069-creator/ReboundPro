@@ -122,9 +122,19 @@ def run_checks(data, now, cal):
         elif last < exp_last_s:
             m.add("scanner-freshness", "Freshness", FAIL,
                   f"scan אחרון {last} מפגר אחרי הצפוי {exp_last_s} — ה-EOD scanner לא רץ.")
+        elif (last == now.date().isoformat()
+              and cal.is_session(pd.Timestamp(now.date()))
+              and now.time() < dtime(18, 30)):
+            # Pre-EOD window: the intraday scanner legitimately writes today's
+            # scan_date before expected_last_scan_date() advances past 18:30 ET.
+            # Not a fault → CALM (severity OK). In this window the "EOD did not run"
+            # guard is the dead-man (reboundpro-daily), not scanner-freshness.
+            m.add("scanner-freshness", "Freshness", OK,
+                  f"scan אחרון {last} = הסשן הפתוח (intraday מקדים; EOD צפוי ~18:30 ET).",
+                  icon=CALM_ICON)
         else:
             m.add("scanner-freshness", "Freshness", WARN,
-                  f"scan אחרון {last} מאוחר מהצפוי {exp_last_s} (בדוק שעון/לוח).")
+                  f"scan אחרון {last} מאוחר מהצפוי {exp_last_s} (תאריך עתידי — בדוק שעון/לוח).")
 
     # 2. intraday-freshness — only a real concern when the market is OPEN TODAY.
     #    On a weekend/holiday no intraday collection is expected → CALM (severity OK,
@@ -158,14 +168,22 @@ def run_checks(data, now, cal):
     # ---- Pillar: Volume / Completeness ----
     # 4. volume-anomaly
     per_day = Counter(d["scan_date"] for d in wdicts if d.get("scan_date"))
+    # Evaluate COMPLETED sessions only — the still-open current session (today,
+    # pre-EOD) is an intraday-only partial cohort and must not be compared to a
+    # full-day average (would false-WARN every trading day pre-EOD).
+    completed = [d for d in scan_dates if d <= exp_last_s]
     if not per_day:
         m.add("volume-anomaly", "Volume", WARN, "אין מועמדים כלל.")
+    elif not completed:
+        m.add("volume-anomaly", "Volume", OK,
+              "אין סשן שנסגר עדיין להשוואת-נפח (רק הסשן הפתוח).")
     else:
-        last_n = per_day[scan_dates[-1]]
+        last_day = completed[-1]
+        last_n = per_day[last_day]
         if last_n == 0:
-            m.add("volume-anomaly", "Volume", WARN, f"0 מועמדים ביום האחרון {scan_dates[-1]}.")
-        elif len(per_day) >= 3:
-            hist = [per_day[d] for d in scan_dates[:-1]]
+            m.add("volume-anomaly", "Volume", WARN, f"0 מועמדים ביום (שנסגר) האחרון {last_day}.")
+        elif len(completed) >= 3:
+            hist = [per_day[d] for d in completed[:-1]]
             mean = sum(hist) / len(hist)
             if mean > 0 and (last_n < 0.2 * mean or last_n > 5 * mean):
                 m.add("volume-anomaly", "Volume", WARN,
