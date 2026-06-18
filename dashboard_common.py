@@ -343,6 +343,101 @@ def restrict(df, keys):
     return df[pd.Series(mask, index=df.index)]
 
 
+# ── Overview (home) — DESCRIPTIVE buckets, NOT signals (M3) ───────────────────
+# Status thresholds are display labels for "where is it now vs entry", never a
+# buy/sell signal. last_close_pct = % from the entry/ref close to the last
+# available close.
+OVERVIEW_STATUS_LABELS = {
+    "recovering": "🟢 מתאוששת", "stable": "⚪ יציבה", "down": "🟠 עדיין-למטה",
+    "falling": "🔴 נופלת", "pending": "⏳ ממתין",
+}
+OUTCOME_BINS = [(-math.inf, -10, "falling"), (-10, -3, "down"),
+                (-3, 3, "stable"), (3, math.inf, "recovering")]
+
+
+def classify_overview_status(last_close_pct, has_forward):
+    """Descriptive bucket of where an event sits now vs entry (NOT a signal):
+    pending if no forward data yet; else by last_close_pct — >=+3 recovering,
+    [-3,+3) stable, [-10,-3) down, <-10 falling."""
+    if not has_forward or last_close_pct is None:
+        return "pending"
+    try:
+        x = float(last_close_pct)
+    except (TypeError, ValueError):
+        return "pending"
+    if math.isnan(x):
+        return "pending"
+    if x >= 3:
+        return "recovering"
+    if x >= -3:
+        return "stable"
+    if x >= -10:
+        return "down"
+    return "falling"
+
+
+def build_overview_table(watch, post, fdaily):
+    """One row per watch event (newest entry first), LEFT-joined to post_analysis
+    scalars and to its forward_daily trajectory. Missing post -> pending / 0 days."""
+    out_cols = ["ticker", "drop_kind", "scan_date", "days", "pct_from_entry",
+                "peak", "trough", "trajectory", "status"]
+    if watch is None or watch.empty:
+        return pd.DataFrame(columns=out_cols)
+    base = watch[["scan_date", "ticker", "drop_kind"]].drop_duplicates(
+        subset=["scan_date", "ticker"]).copy()
+    pcols = ["scan_date", "ticker", "last_close_pct", "max_recovery_pct",
+             "max_further_drop_pct", "forward_days_available"]
+    p = (post[[c for c in pcols if c in post.columns]].copy()
+         if post is not None and not post.empty else pd.DataFrame(columns=pcols))
+    t = base.merge(p, on=["scan_date", "ticker"], how="left")
+    for c in ("last_close_pct", "max_recovery_pct", "max_further_drop_pct",
+              "forward_days_available"):
+        if c not in t.columns:
+            t[c] = float("nan")
+    # forward_daily trajectory (cum_pct_from_ref ordered by day_offset) per event
+    traj = {}
+    if fdaily is not None and not fdaily.empty and \
+            {"scan_date", "ticker", "day_offset", "cum_pct_from_ref"} <= set(fdaily.columns):
+        f = fdaily.assign(_o=pd.to_numeric(fdaily["day_offset"], errors="coerce")).sort_values("_o")
+        for (sd, tk), g in f.groupby(["scan_date", "ticker"]):
+            traj[(str(sd), str(tk))] = [float(v) for v in
+                                        pd.to_numeric(g["cum_pct_from_ref"], errors="coerce").dropna()]
+    t["trajectory"] = [traj.get((str(sd), str(tk)), [])
+                       for sd, tk in zip(t["scan_date"], t["ticker"])]
+    t["pct_from_entry"] = pd.to_numeric(t["last_close_pct"], errors="coerce")
+    t["days"] = pd.to_numeric(t["forward_days_available"], errors="coerce").fillna(0).astype(int)
+    t["peak"] = pd.to_numeric(t["max_recovery_pct"], errors="coerce")
+    t["trough"] = pd.to_numeric(t["max_further_drop_pct"], errors="coerce")
+    has_fwd = [(len(tr) > 0) or (d > 0) for tr, d in zip(t["trajectory"], t["days"])]
+    t["status"] = [classify_overview_status(p, hf)
+                   for p, hf in zip(t["pct_from_entry"], has_fwd)]
+    t = t.sort_values(["scan_date", "ticker"], ascending=[False, True]).reset_index(drop=True)
+    return t[out_cols]
+
+
+def recovery_curve(fdaily):
+    """Mean cum_pct_from_ref per (drop_kind, day_offset) — average recovery path
+    per hypothesis. Empty-safe."""
+    cols = ["drop_kind", "day_offset", "mean_cum_pct"]
+    if fdaily is None or fdaily.empty or \
+            not {"drop_kind", "day_offset", "cum_pct_from_ref"} <= set(fdaily.columns):
+        return pd.DataFrame(columns=cols)
+    g = (fdaily.assign(_c=pd.to_numeric(fdaily["cum_pct_from_ref"], errors="coerce"))
+         .groupby(["drop_kind", "day_offset"])["_c"].mean().reset_index())
+    g.columns = cols
+    return g
+
+
+def outcome_histogram(last_close_series):
+    """Count of events per last_close_pct bucket (falling->recovering, red->green)."""
+    s = pd.to_numeric(pd.Series(last_close_series), errors="coerce").dropna()
+    rows = []
+    for lo, hi, name in OUTCOME_BINS:
+        n = int((s >= lo).sum()) if hi == math.inf else int(((s >= lo) & (s < hi)).sum())
+        rows.append({"bucket": name, "count": n})
+    return pd.DataFrame(rows)
+
+
 def sidebar_controls(sheet_id):
     with st.sidebar:
         st.header("⚙️ Controls")
@@ -723,6 +818,85 @@ def _stats(watch, drop_kind):
 
 
 # ── page orchestrator ────────────────────────────────────────────────────────
+def render_overview(sheet_id):
+    """Home 'overview': one descriptive table of what each event did from entry to
+    now (% from entry, days, trajectory sparkline, status) + two aggregate views.
+    M3, VIEW-ONLY — the status buckets are descriptive, never signals."""
+    try:
+        data = load_many(sheet_id, {config.TAB_WATCHLIST: NUM_WATCH,
+                                    config.TAB_POST: NUM_POST,
+                                    config.TAB_FORWARD_DAILY: NUM_FDAILY})
+    except gspread.exceptions.APIError as e:
+        (st.info(QUOTA_MSG) if _is_quota(e) else st.error(f"שגיאת קריאה מה-Sheet: {e}"))
+        return
+    except Exception as e:
+        st.error(f"שגיאת קריאה מה-Sheet: {e}")
+        return
+    watch = coalesce_kind(data[config.TAB_WATCHLIST])
+    if watch.empty:
+        st.warning("watchlist_live ריק — עדיין לא נאספו נתונים.")
+        return
+    tbl = build_overview_table(watch, data[config.TAB_POST], data[config.TAB_FORWARD_DAILY])
+
+    # KPIs (descriptive)
+    avg_move = tbl["pct_from_entry"].dropna().mean()
+    k = st.columns(4)
+    kpi(k[0], "סה\"כ במעקב", len(tbl))
+    kpi(k[1], "🟢 מתאוששות", int((tbl["status"] == "recovering").sum()))
+    kpi(k[2], "🔴/🟠 עדיין-למטה", int(tbl["status"].isin(["down", "falling"]).sum()))
+    kpi(k[3], "תנועה ממוצעת", f"{avg_move:+.1f}%" if pd.notna(avg_move) else "—")
+
+    # filters
+    with st.expander("🔎 סינון", expanded=False):
+        all_kinds = sorted(tbl["drop_kind"].dropna().unique())
+        kinds = st.multiselect("סוג", all_kinds, default=all_kinds)
+        statuses = st.multiselect("סטטוס", list(OVERVIEW_STATUS_LABELS),
+                                  default=list(OVERVIEW_STATUS_LABELS),
+                                  format_func=lambda s: OVERVIEW_STATUS_LABELS.get(s, s))
+        dts = sorted(tbl["scan_date"].dropna().unique())
+        dr = st.select_slider("טווח תאריך-כניסה", options=dts,
+                              value=(dts[0], dts[-1])) if len(dts) > 1 else None
+    view = tbl[tbl["drop_kind"].isin(kinds) & tbl["status"].isin(statuses)]
+    if dr:
+        view = view[(view["scan_date"] >= dr[0]) & (view["scan_date"] <= dr[1])]
+
+    disp = pd.DataFrame({
+        "טיקר": view["ticker"],
+        "סוג": view["drop_kind"].map({"intraday_drop": "⚡ intraday",
+                                      "gradual_drop": "🐢 gradual"}).fillna(view["drop_kind"]),
+        "תאריך-כניסה": view["scan_date"],
+        "ימים": view["days"],
+        "% מהכניסה": view["pct_from_entry"],
+        "מסלול": view["trajectory"],
+        "סטטוס": view["status"].map(lambda s: OVERVIEW_STATUS_LABELS.get(s, s)),
+    })
+    st.dataframe(disp, width="stretch", hide_index=True, column_config={
+        "ימים": st.column_config.NumberColumn(format="%d"),
+        "% מהכניסה": st.column_config.NumberColumn(format="%+.2f%%"),
+        "מסלול": st.column_config.LineChartColumn("מסלול (cum% מהכניסה)"),
+    })
+    st.caption("סטטוס תיאורי בלבד — היכן המניה כעת מול הכניסה. **אין כאן אות/המלצה.**")
+
+    # aggregate 1 — average recovery curve (intraday vs gradual)
+    st.markdown("**עקומת-התאוששות ממוצעת — cum% מהכניסה לכל יום-קדימה**")
+    rc = recovery_curve(data[config.TAB_FORWARD_DAILY])
+    if not rc.empty:
+        plot(st, px.line(rc, x="day_offset", y="mean_cum_pct", color="drop_kind", markers=True))
+    else:
+        st.caption("אין עדיין נתוני forward_daily לעקומה.")
+
+    # aggregate 2 — outcome distribution histogram (red -> green)
+    st.markdown("**התפלגות-תוצאות — ספירת אירועים לפי % מהכניסה**")
+    hist = outcome_histogram(tbl["pct_from_entry"])
+    if int(hist["count"].sum()) > 0:
+        order = ["falling", "down", "stable", "recovering"]
+        cmap = {"falling": RED, "down": "#ffa726", "stable": GREY, "recovering": GREEN}
+        plot(st, px.bar(hist, x="bucket", y="count", color="bucket",
+                        category_orders={"bucket": order}, color_discrete_map=cmap))
+    else:
+        st.caption("אין עדיין תוצאות-forward להתפלגות.")
+
+
 def render(drop_kind, heading, blurb):
     """Render the full tab set for ONE hypothesis (drop_kind). Called by each page.
 

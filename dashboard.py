@@ -15,11 +15,10 @@ totals, then "pick a page in the sidebar".
 Run locally:  streamlit run dashboard.py
 Streamlit Cloud entrypoint stays dashboard.py; pages/ is auto-discovered.
 """
-# Streamlit Cloud redeploy marker — 2026-06-16f (forward_daily charts: real dates
-# on x-axis, % value labels, yellow D0 entry point/marker). Bump to force a clean
-# reboot dropping cached modules.
+# Streamlit Cloud redeploy marker — 2026-06-18g (overview home: descriptive table —
+# what each event did from entry to now — + average recovery curve + outcome
+# histogram; the two old home charts removed). Bump to force a clean reboot.
 import gspread
-import plotly.express as px
 import streamlit as st
 
 import config
@@ -66,13 +65,8 @@ common.kpi(c[3], "ימי מסחר ייחודיים", len(days))
 st.info("בחר דף בסרגל הצד: **⚡ Intraday Drop** (צניחה חדה תוך-יומית) או "
         "**🐢 Gradual Drop** (ירידה הדרגתית ל-5 ימים). כל דף מסונן מראש להשערה שלו.")
 
-st.markdown("**פילוח לפי השערה (intraday_drop מול gradual_drop)**")
-kc = watch["drop_kind"].value_counts().reset_index()
-kc.columns = ["drop_kind", "count"]
-common.plot(st, px.bar(kc, x="drop_kind", y="count"))
-
-st.markdown("**מועמדים/יום לפי השערה (stacked)**")
-per_day = watch.groupby(["scan_date", "drop_kind"]).size().reset_index(name="candidates")
-common.plot(st, px.bar(per_day, x="scan_date", y="candidates", color="drop_kind"))
+# 📊 מבט-על: טבלה אחת — מה כל מניה עשתה מהכניסה עד עכשיו — + שתי תצוגות-מצרף.
+st.subheader("📊 מבט-על — מהכניסה עד עכשיו")
+common.render_overview(sheet_id)
 
 st.caption("ReboundPro · monitoring only · אין כאן לוגיקת מסחר.")
