@@ -71,6 +71,10 @@ jobs:
           python health_monitor.py ${{ steps.mode.outputs.flag }} | tee /tmp/health.txt
           code=${PIPESTATUS[0]}
           set -e
+          # Export verdict BEFORE the ran-flag, so HEALTH_RAN=1 always implies
+          # HEALTH_CODE is populated (no window where the verdict alert sees a
+          # set ran-flag but an empty code -> a /fail would mean a real crash only).
+          echo "HEALTH_CODE=$code" >> "$GITHUB_ENV"
           echo "HEALTH_RAN=1" >> "$GITHUB_ENV"   # python produced a verdict -> health DID run (drives the dead-man heartbeat)
           {
             echo "### 🩺 Health monitor \`${{ steps.mode.outputs.flag }}\` — exit=$code"
@@ -106,4 +110,24 @@ jobs:
             curl -fsS -m 10 --retry 3 "$HC_URL" && echo "heartbeat OK (health ran)"
           else
             echo "health did not run (HEALTH_RAN unset) — no ping; dead-man will fire after grace."
+          fi
+
+      # Verdict alert (healthchecks.io reboundpro-warn) — H3. Pings /success when
+      # health is green (code 0) and /fail when WARN or FAIL (code 1/2). hc emails
+      # ONLY on a status CHANGE (up<->down), so this is transition alerting: one
+      # mail on OK->WARN, one on recovery WARN->OK — not per run. Independent of the
+      # dead-man heartbeat above (reboundpro-health stays pure liveness, unchanged).
+      # GUARDED on HC_PING_WARN so it is safe to commit before the check + secret
+      # exist; gated on HEALTH_RAN so non-execution is left to the dead-man, not /fail.
+      - name: Verdict alert (healthchecks.io reboundpro-warn)
+        if: always()
+        env:
+          HC_URL: ${{ secrets.HC_PING_WARN }}
+        run: |
+          if [ -z "$HC_URL" ]; then echo "HC_PING_WARN unset — skipping verdict alert."; exit 0; fi
+          if [ "$HEALTH_RAN" != "1" ]; then echo "health did not run — no verdict ping (dead-man covers it)."; exit 0; fi
+          if [ "$HEALTH_CODE" = "0" ]; then
+            curl -fsS -m 10 --retry 3 "$HC_URL"      && echo "verdict ping: OK (green)"
+          else
+            curl -fsS -m 10 --retry 3 "$HC_URL/fail" && echo "verdict ping: /fail (WARN/FAIL, code=$HEALTH_CODE)"
           fi
