@@ -24,6 +24,9 @@ research/phase0/verdict.json
 # Claude Code local settings (per-machine)
 .claude/settings.local.json
 
+# Backups
+*.bak_*
+
 # OS / editor
 .DS_Store
 .idea/

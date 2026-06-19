@@ -13,7 +13,7 @@ ReboundPro היא מערכת מחקר חדשה, **עצמאית לחלוטין**,
 
 **החלטות שאושרו (2026-06-13):** שם = **ReboundPro** · יקום = **NASDAQ+NYSE** · סף ירידה = **10%** (בדיקת grid 7/10/15) · ספק = **Polygon (intraday) + FMP (fundamentals)**, yfinance/EODHD כ-fallback היסטורי ל-Phase 0 · חלון החזקה = **Phase 0 מחשב את כל החלונות, ההחלטה תיגזר מהנתונים**.
 
-**נכס מפתח שזוהה:** DropsLab (`Ambroseius/DropsLab`, sheet `1M-ofmSmUHAb7o8J_pZFKYHh4N1aZVOXVWngFzTYxjZQ`, tab `DropsLab-Data`) כבר סורק NASDAQ+NYSE לירידות 10%+ עם 38 מדדים. זה בדיוק הדאטה-סט שצריך ל-Phase 0 — אבל "accumulating, not yet analyzed", כך שעומק ההיסטוריה מוגבל וידרוש backfill מ-Polygon/EODHD.
+**נכס מפתח שזוהה:** DropsLab (`projects5069-creator/DropsLab`, sheet `1XM-qId7HAwEu-8-1GGHcy3RoyyAnsYshjZfDrKFnTMI`, tabs `drops_raw`+`drops_post`) כבר סורק NASDAQ+NYSE לירידות 10%+ עם 38 מדדים. זה בדיוק הדאטה-סט שצריך ל-Phase 0 — אבל "accumulating, not yet analyzed", כך שעומק ההיסטוריה מוגבל וידרוש backfill מ-Polygon/EODHD.
 
 **עיקרון מנחה:** אסטרטגיה ש"נשברת הכי פחות", לא ש"מרוויחה הכי הרבה על הנייר". 20% מהזמן ליצירת רעיון, 80% לניסיון לשבור אותו. כל בדיקה נטו-אחרי-עלויות. נתוני point-in-time בלבד.
 

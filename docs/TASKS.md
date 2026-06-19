@@ -1,5 +1,10 @@
 # ReboundPro — Tasks
 
+## ▶ NEXT — HYP-002 integration (2026-06-19)
+- **TASK-A** — Document HYP-002 long-rebound thesis (composite distress+rsi + VIX regime-gate) + register in HYPOTHESES.md (DONE — `docs/HYP-002_long_rebound_thesis.md` + `docs/HYPOTHESES.md`).
+- **TASK-B** — Fix BuildSpec DropsLab drift: Ambroseius→projects5069-creator, sheet→1XM-qId7, tab→drops_raw/post (DONE).
+- **TASK-C** — Resolve Phase-0 data source: DropsLab n=3988 vs ReboundPro-Data ~77 (drop-def parity) before M5 integration.
+
 ## ✅ DONE
 - **M0** — נעילת אסטרטגיה + קריטריון M4.
 - **M1** — EOD collector (scanner + post_analysis).
