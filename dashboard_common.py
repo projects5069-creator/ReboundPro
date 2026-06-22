@@ -113,7 +113,7 @@ PCT_COLS = {
     "drop_pct_from_open", "close_pct_from_open", "pct_change_prevclose",
     "spy_change_pct", "sector_etf_change_pct", "recovery_from_low_pct",
     "first_cross_drop_pct", "max_recovery_pct", "max_further_drop_pct",
-    "last_close_pct", "pct_from_open", "drop_pct_window",
+    "last_close_pct", "pct_from_open", "pct_from_ref", "drop_pct_window",
     "pct_from_52w_high", "pct_from_52w_low", "prior_decline_20d_pct",
     "prior_decline_60d_pct", "recovery_from_trough_pct", "max_recovery_from_trough_pct",
     "sector_momentum_5d", "sector_momentum_20d",
@@ -122,7 +122,7 @@ PCT_COLS = {
 INT_COLS = {
     "volume", "avg_volume_20d", "adv_dollar", "market_cap", "scans_count",
     "forward_days_available", "horizon", "day_of_max_recovery", "day_of_max_drop",
-    "trough_day",
+    "trough_day", "dn",
     "total_finviz_candidates", "passed_floor", "below_min_price", "below_min_cap",
     "below_min_adv", "drop_below_threshold", "other_rejects",
 } | set(config.RECLAIM_GRID_COLUMNS)   # grid values are D+n day counts (or blank)
@@ -1065,11 +1065,35 @@ def render_live_status(sheet_id=None):
     ts["_date"] = ts["timestamp"].astype(str).str[:10]
     # days-since-entry (D+n) = distinct trading dates seen for the event minus 1
     # (D0). Derived from the data itself — no calendar dependency / heavy import.
-    dn = (ts.groupby(["scan_date", "ticker"])["_date"].nunique() - 1).rename("D+n")
+    dn = (ts.groupby(["scan_date", "ticker"])["_date"].nunique() - 1).rename("dn")
     # latest intraday point per (scan_date, ticker) — string ts sorts chronologically
     latest = (ts.sort_values("timestamp")
                 .groupby(["scan_date", "ticker"], as_index=False).tail(1)
                 .merge(dn, on=["scan_date", "ticker"], how="left"))
+
+    # reference price + drop_kind joined from the watchlist event (NOT recomputed):
+    # intraday reference = open (drop-day open); gradual reference = ref_close_window.
+    try:
+        watch = load(sheet_id, config.TAB_WATCHLIST, ["open", "ref_close_window"])
+    except gspread.exceptions.APIError as e:
+        st.info(QUOTA_MSG if _is_quota(e) else f"מצב-חי לא נקרא מה-Sheet: {e}")
+        return
+    wkeep = [c for c in ("scan_date", "ticker", "open", "ref_close_window", "drop_kind")
+             if c in watch.columns]
+    wsub = (watch[wkeep].drop_duplicates(["scan_date", "ticker"]) if not watch.empty
+            else pd.DataFrame(columns=wkeep))
+    latest = latest.merge(wsub, on=["scan_date", "ticker"], how="left")
+    if "drop_kind" not in latest.columns:
+        latest["drop_kind"] = "intraday_drop"
+    latest["drop_kind"] = latest["drop_kind"].replace("", "intraday_drop").fillna("intraday_drop")
+
+    # reference: open for intraday_drop, ref_close_window for gradual_drop
+    is_grad = latest["drop_kind"] == "gradual_drop"
+    ref = latest["open"].where(~is_grad, latest.get("ref_close_window"))
+    latest["reference"] = pd.to_numeric(ref, errors="coerce")
+    latest["pct_from_ref"] = ((latest["price"] - latest["reference"])
+                              / latest["reference"].where(latest["reference"] > 0)
+                              * 100).round(2)
 
     today = pd.Timestamp.now(tz="America/Lima").strftime("%Y-%m-%d")
     newest = latest["timestamp"].astype(str).max()
@@ -1078,12 +1102,48 @@ def render_live_status(sheet_id=None):
     else:
         st.caption(f"🟢 חי · עדכון אחרון {newest} (ET) · {len(latest)} מניות במעקב")
 
-    disp = (latest[["ticker", "scan_date", "D+n", "price", "pct_from_open", "timestamp"]]
-            .rename(columns={"price": "price_now", "pct_from_open": "pct_open",
-                             "timestamp": "upd_et"}))
-    disp = (disp.assign(_abs=disp["pct_open"].abs())
-                .sort_values("_abs", ascending=False).drop(columns="_abs"))
-    show_table(disp)
+    # header-style filters — same idiom as _watchlist; default = all
+    KIND_LABELS = {"intraday_drop": "⚡ intraday", "gradual_drop": "🐢 gradual"}
+    fc = st.columns(2)
+    kinds = sorted(latest["drop_kind"].dropna().unique())
+    sel_kind = fc[0].multiselect("סוג", kinds, default=kinds,
+                                 format_func=lambda k: KIND_LABELS.get(k, k))
+    sdays = sorted(latest["scan_date"].dropna().unique())
+    sel_day = fc[1].multiselect("כניסה (scan_date)", sdays, default=sdays)
+    view = latest[latest["drop_kind"].isin(sel_kind) & latest["scan_date"].isin(sel_day)]
+    if view.empty:
+        st.info("אין שורות לבחירה הנוכחית.")
+        return
+
+    # initial order: |daily move| descending (descriptive ordering only; the table
+    # itself is click-sortable by any column header).
+    view = view.assign(_abs=view["pct_from_open"].abs()).sort_values("_abs", ascending=False)
+    disp = view.assign(**{"סוג": view["drop_kind"].map(KIND_LABELS).fillna(view["drop_kind"])})[
+        ["ticker", "סוג", "scan_date", "dn", "reference", "price",
+         "pct_from_open", "pct_from_ref", "volume", "timestamp"]]
+
+    # reuse styled() (%, 2dp, thousands) + sign_colors() for per-sign colour on the
+    # two pct columns — no duplicated formatting/colour logic.
+    sty = styled(disp)
+    for pcol in ("pct_from_open", "pct_from_ref"):
+        sty = sty.apply(lambda s: [f"color: {c}" for c in sign_colors(s)], subset=[pcol])
+
+    # Hebrew header labels + micro-tooltips distinguishing the two % columns.
+    cfg = {
+        "ticker": st.column_config.Column("טיקר"),
+        "scan_date": st.column_config.Column("כניסה"),
+        "dn": st.column_config.Column("D+n", help="ימי-מסחר מאז יום-הצניחה (D0)"),
+        "reference": st.column_config.Column(
+            "מחיר-ייחוס", help="נקודת-ההתחלה: intraday=open ביום-הצניחה · gradual=ref_close"),
+        "price": st.column_config.Column("מחיר נוכחי"),
+        "pct_from_open": st.column_config.Column(
+            "% שינוי יומי", help="תנועת המחיר היום מהפתיחה (תוך-יומי)"),
+        "pct_from_ref": st.column_config.Column(
+            "% מהייחוס", help="מאז נקודת-הצניחה: (מחיר נוכחי − מחיר-ייחוס) / מחיר-ייחוס"),
+        "volume": st.column_config.Column("נפח"),
+        "timestamp": st.column_config.Column("עודכן (ET)"),
+    }
+    st.dataframe(sty, column_config=cfg, hide_index=True, width="stretch")
 
 
 def render_system_health(sheet_id=None):
