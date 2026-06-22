@@ -1,6 +1,6 @@
 [project]
 name = "reboundpro"
-version = "0.1.0"
+version = "0.2.0"
 description = "Research system for catching intraday-drop rebounds (long) on NASDAQ+NYSE. Simulation only."
 requires-python = ">=3.11"
 # Runtime deps for the Streamlit Cloud dashboard (Cloud installs from uv.lock).
@@ -21,3 +21,17 @@ target-version = "py311"
 
 [tool.pytest.ini_options]
 testpaths = ["tests"]
+pythonpath = ["."]
+
+# Dev/test deps. Collector scripts (scanner/collector/intraday) import these but
+# run in GitHub Actions (pip-installed there). Listed here so `uv run pytest`
+# resolves the full test env locally without a manual --with chain.
+[dependency-groups]
+dev = [
+    "pytest",
+    "numpy",
+    "pytz",
+    "yfinance",
+    "exchange_calendars",
+    "finvizfinance",
+]

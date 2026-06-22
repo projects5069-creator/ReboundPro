@@ -181,6 +181,7 @@ def build_snapshot(row, scan_date, ref_date, spy_chg, vix, now):
     mom5, mom20 = sc.etf_momentum(etf, scan_date) if etf else (None, None)
     drop_day_rel_vol = round(vol / avg_vol_20, 2) if avg_vol_20 else ""
 
+    _atr = sc.atr_14(h)   # Wilder ATR(14)$ as-of scan_date — single ATR source
     snap = {
         "scan_date": str(scan_date), "ticker": ticker, "exchange": row.get("_exchange", ""),
         "company_name": row.get("Company", ""), "sector": sector,
@@ -196,6 +197,10 @@ def build_snapshot(row, scan_date, ref_date, spy_chg, vix, now):
         "adv_dollar": int(adv_dollar),
         "volume_ratio": round(vol / avg_vol_20, 2) if avg_vol_20 else "",
         "rsi_14": sc.rsi_14(h["Close"]),
+        # descriptive ATR features (M5-safe). gradual $-drop = ref_close_window - close
+        # (the WINDOW decline), matching this drop_kind — NOT open-intraday_low.
+        "atr_14": _atr,
+        "drop_in_atr": sc.drop_in_atr(ref_close - cl, _atr),
         "spy_change_pct": spy_chg, "sector_etf": etf or "",
         "sector_etf_change_pct": sec_chg, "market_regime": sc.market_regime(spy_chg),
         "drop_type": sc.classify_drop_type(spy_chg, sec_chg), "scanned_at": now,

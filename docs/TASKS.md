@@ -42,3 +42,10 @@
 
 ## 📦 BACKLOG
 - **פיצול Google Sheets חודשי / מעבר ל-DB** — טריגר: כשטאב כלשהו (בעיקר `intraday_timeseries`, שגדל מהר) עובר ~50k שורות או צובר חודשיים נתונים. שקול רוטציה חודשית (כמו RidingHigh) או מעבר ל-DB.
+
+## 🧩 מועמדי-איסוף תיאוריים — Vardan gap (M3-חוקי)
+*מקור: `docs/VARDAN_GAP_ANALYSIS.md` + תוכנית `docs/superpowers/plans/2026-06-22-reclaim-grid-drop-atr.md`. פיצ'רים תיאוריים בלבד — **אפס ניקוד/אות/החלטת-כניסה; גבול M5 נשמר**.*
+- **TASK-V1 — Reclaim/drop grid** (DONE — v0.2.0, commits 1772fea→b1cbf91, TDD): ב-`post_analysis` 13 עמודות יום-או-ריק — `up_reach_day_{1,2,3,5,8}pct` + `down_reach_day_{1,2,3,5,8}pct` (**superset** של `touched_up_5pct`/`touched_down_8pct`) + `reclaim_atr_day_{0_5,1,1_5}x` (reclaim מעל השפל ב-ATR, מ-**יום-אחרי-שפל**). מקור-שמות `config.RECLAIM_GRID_COLUMNS`. מתמלא בריצת-קולקטור (re-process מלא).
+- **drop_in_ATR + atr_14** (DONE — v0.2.0): `scanner.atr_14` (Wilder ATR$, מקור-יחיד) + `drop_in_atr` ב-watchlist (intraday: open−low ; gradual: window-drop); `--backfill-atr` חד-פעמי point-in-time. החלון ATR מ-trough+1 = תזמון-אישור (≠ `max_recovery_from_trough_pct`=עוצמה).
+- **TASK-V2 — חשיפת SMA%/52W ל-`watchlist`** (DEFERRED, D6): אומת ש-`SMA20_num`/`SMA50_num`/`52W_*_dist_num` כבר אחוזי-מרחק ב-`fundamentals_snapshot`; הפער = חשיפה/join בלבד (`SMA200` raw-only). נדחה.
+- *(BACKLOG, לא-מאושר: down-grid מנורמל-ATR; `drop_in_atr` כפיצ'ר ב-context-signals.)*
