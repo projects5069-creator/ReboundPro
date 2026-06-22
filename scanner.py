@@ -562,6 +562,71 @@ def backfill_missing_tags(dry_run=False):
     return out, len(out)
 
 
+def _drop_dollars_for_kind(drop_kind, open_, low_so_far, ref_close_window, price):
+    """$-drop numerator for drop_in_atr, matching the row's drop_kind (from STORED
+    watchlist fields). gradual: ref_close_window - price ; else (intraday/legacy):
+    open - low_so_far. Returns None when a needed input is missing."""
+    if drop_kind == "gradual_drop":
+        if ref_close_window is None or price is None:
+            return None
+        return ref_close_window - price
+    if open_ is None or low_so_far is None:
+        return None
+    return open_ - low_so_far
+
+
+def backfill_atr(dry_run=False):
+    """ONE-TIME backfill: fill atr_14 + drop_in_atr for watchlist_live rows missing
+    atr_14. point-in-time ATR(14)$ (history <= scan_date); drop_in_atr numerator per
+    drop_kind from STORED fields. Partial merge-safe upsert by (scan_date,ticker) —
+    no field overwritten. NOT in the daily workflow. Descriptive — M5 safe.
+    Returns (computed_rows, n_targets)."""
+    import sheets_manager as sm
+    wh, wd = sm.read_rows(config.SHEET_ID, config.TAB_WATCHLIST)
+    if not wd:
+        log.info("watchlist_live empty — nothing to backfill.")
+        return [], 0
+    idx = {c: i for i, c in enumerate(wh)}
+    if not all(k in idx for k in ("scan_date", "ticker")):
+        log.error("watchlist_live missing scan_date/ticker columns.")
+        return [], 0
+
+    def cell(r, c):
+        return r[idx[c]] if c in idx and idx[c] < len(r) else ""
+
+    targets = [r for r in wd if cell(r, "scan_date") and cell(r, "ticker")
+               and not cell(r, "atr_14")]
+    log.info("ATR backfill: %d/%d rows missing atr_14.", len(targets), len(wd))
+
+    out = []
+    for r in targets:
+        tk, sd_s = cell(r, "ticker"), cell(r, "scan_date")
+        try:
+            sd = datetime.strptime(sd_s, "%Y-%m-%d").date()
+            h = yf.Ticker(tk).history(
+                start=str(sd - timedelta(days=config.EOD_HISTORY_DAYS)),
+                end=str(sd + timedelta(days=1)), auto_adjust=True)
+            h = h[h.index.date <= sd]
+            if h.empty:
+                continue
+            atr = atr_14(h)
+            dk = cell(r, "drop_kind") or "intraday_drop"
+            dd = _drop_dollars_for_kind(dk, parse_num(cell(r, "open")),
+                                        parse_num(cell(r, "low_so_far")),
+                                        parse_num(cell(r, "ref_close_window")),
+                                        parse_num(cell(r, "price")))
+            out.append({"scan_date": sd_s, "ticker": tk,
+                        "atr_14": atr, "drop_in_atr": drop_in_atr(dd, atr)})
+        except Exception as e:
+            log.warning("backfill_atr %s failed: %s", tk, e)
+        time.sleep(config.RATE_LIMIT_SLEEP)
+
+    if out and not dry_run:
+        sm.upsert_by_key(config.SHEET_ID, config.TAB_WATCHLIST, HEADER, out,
+                         ["scan_date", "ticker"])
+    return out, len(targets)
+
+
 def main():
     ap = argparse.ArgumentParser()
     ap.add_argument("--date", type=lambda s: datetime.strptime(s, "%Y-%m-%d").date(), default=None)
@@ -572,6 +637,9 @@ def main():
     ap.add_argument("--backfill-tags", action="store_true",
                     help="ONE-TIME: fill drop_kind/source for legacy rows missing "
                          "them. No scan.")
+    ap.add_argument("--backfill-atr", action="store_true",
+                    help="ONE-TIME: fill atr_14 + drop_in_atr for watchlist rows "
+                         "missing atr_14 (point-in-time). No scan.")
     args = ap.parse_args()
 
     # one-time context backfill path (does NOT scan; not in the daily workflow)
@@ -598,6 +666,19 @@ def main():
         print(f"\n--- BACKFILL TAGS ({mode}): {n} rows missing drop_kind ---")
         for r in out:
             print(f"  {r['scan_date']} {r['ticker']}: drop_kind={r['drop_kind']} source={r['source']}")
+        return out
+
+    # one-time ATR backfill (atr_14 + drop_in_atr for legacy rows) — no scan
+    if args.backfill_atr:
+        if not config.SHEET_ID:
+            log.error("No SHEET_ID configured — cannot backfill ATR.")
+            return []
+        out, n = backfill_atr(dry_run=args.dry_run)
+        mode = "DRY RUN" if args.dry_run else "WROTE"
+        print(f"\n--- BACKFILL ATR ({mode}): {n} rows missing atr_14; computed {len(out)} ---")
+        if out:
+            import json
+            print(json.dumps(out[0], indent=2, default=str, ensure_ascii=False))
         return out
 
     scan_date = last_trading_day(args.date or date.today())
