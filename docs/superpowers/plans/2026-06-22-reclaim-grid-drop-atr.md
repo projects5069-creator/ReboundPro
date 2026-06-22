@@ -1,7 +1,17 @@
-# Reclaim/Drop Grid + drop_in_ATR — Implementation Plan (DECISIONS PENDING)
+# Reclaim/Drop Grid + drop_in_ATR — Implementation Plan (✅ RESOLVED & SHIPPED v0.2.0)
 
 > **For agentic workers:** REQUIRED SUB-SKILL: superpowers:subagent-driven-development or :executing-plans. TDD, checkbox steps.
-> **STATUS: awaiting DECISION sign-off before any code** (per user). Full no-placeholder TDD steps are finalized once D1–D6 are decided.
+> **STATUS: SHIPPED** (v0.2.0, PR #1). This file is the historical planning artifact; the DECISION recommendations below are PRE-decision. See **"Resolved as"** for what was actually built — the code, PROJECT_KNOWLEDGE.md (§M3.9) and TASKS.md are the source of truth.
+
+## ✅ Resolved as (final decisions — what shipped, may differ from the recs below)
+- **D1 — column form:** separate column per threshold, **day-or-blank** (13 cols). *(as recommended)*
+- **D2 — ATR source:** **NOT** "widen collector history". Final: `scanner.atr_14` computed once at scan time and stored in `watchlist_live.atr_14` (single ATR source); `post_analysis` **reads it** (passed into `compute_outcome(atr=…)` from the watchlist row) — no widened window, no re-fetch. This also yields `drop_in_atr` for free at scan.
+- **D3 — down grid:** **%-down only** (ATR-down deferred). *(as recommended; note: ref_close is a fixed anchor, so ATR-down is easy to add later if wanted.)*
+- **D4 — drop_in_atr numerator (by drop_kind):** intraday = `open − intraday_low`; **gradual = `ref_close_window − close`** (window decline, NOT open−low). Computed in both `scanner.py` and `gradual_scanner.py`.
+- **ATR-from-trough grid:** measured from **the day AFTER the trough** (`trough_idx+1`) = confirmation-timing; **differs on purpose** from `max_recovery_from_trough_pct` (inclusive of trough day = intensity). *(refinement added during review.)*
+- **D5 — backfill:** forward-only + one-off `scanner.py --backfill-atr` (watchlist atr_14/drop_in_atr). The post_analysis grid needs **no** backfill — verified the daily collector re-processes every event and upserts.
+- **D6 — SMA exposure (TASK-V2):** **deferred** (SMA% already lives as %-distance in `fundamentals_snapshot`).
+- Single source of truth for grid column names: `config.RECLAIM_GRID_COLUMNS`. 98 tests green; M5 boundary preserved.
 
 **Goal:** Add two **descriptive-only** data products — (V1) a multi-threshold reclaim/drop grid (fixed-% + ATR-normalized) in `post_analysis`, and (drop_in_ATR) a point-in-time capitulation feature in `watchlist_live` — extending the existing `touched_up_5pct`/`touched_down_8pct`/`recovery-from-trough` pattern.
 
