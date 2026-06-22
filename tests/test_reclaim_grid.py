@@ -61,6 +61,23 @@ def test_atr_from_trough_grid_days(monkeypatch):
     assert out["reclaim_atr_day_1_5x"] == 4
 
 
+def test_atr_grid_excludes_intraday_reversal_on_trough_day(monkeypatch):
+    # Trough day (D+1) has a big intraday bounce (High 96 vs Low 90 = 3 ATRs), but
+    # later days stay flat at the low. Reclaim is a CONFIRMATION-TIMING feature, so
+    # the trough day's own intraday spike must NOT count → all blank.
+    f = _frame([
+        ("2026-06-01", 100, 100, 100, 100),
+        ("2026-06-02", 90, 96, 90, 90),        # D+1 trough Low=90, intraday High=96
+        ("2026-06-03", 90, 90, 90, 90),        # D+2 flat at low
+        ("2026-06-04", 90, 90, 90, 90),        # D+3 flat at low
+    ])
+    monkeypatch.setattr(pac.yf, "Ticker", lambda t: _FakeTicker(f))
+    out = pac.compute_outcome("AAA", SCAN, ref_close=100.0, atr=2.0)
+    assert out["reclaim_atr_day_0_5x"] == ""
+    assert out["reclaim_atr_day_1x"] == ""
+    assert out["reclaim_atr_day_1_5x"] == ""
+
+
 def test_atr_grid_blank_when_no_atr(monkeypatch):
     f = _frame([
         ("2026-06-01", 100, 100, 100, 100),

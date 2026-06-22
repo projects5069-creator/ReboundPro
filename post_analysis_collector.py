@@ -193,9 +193,14 @@ def reclaim_grid(highs, lows, fwd, trough_idx, trough_price, atr):
     """Descriptive forward-window grid (day-or-blank per threshold). M5-safe.
     up/down grids = first D+n the forward High/Low crossed +/-thr% of ref_close
     (generalise touched_up/touched_down). ATR grid = first D+n the reclaim ABOVE
-    the trough = (High - trough)/ATR reached thr ATRs — measured from the trough day
-    onward (inclusive, matching max_recovery_from_trough_pct), normalised by the
-    as-of-D0 ATR(14)$ supplied by the caller (watchlist atr_14). NEVER a signal."""
+    the trough = (High - trough)/ATR reached thr ATRs, normalised by the as-of-D0
+    ATR(14)$ supplied by the caller (watchlist atr_14). NEVER a signal.
+
+    INTENTIONAL DESIGN: the ATR grid measures from the day AFTER the trough
+    (trough_idx+1), so a big intraday reversal ON the capitulation/trough bar does
+    NOT count — this is a CONFIRMATION-TIMING feature (when did the bounce hold the
+    next day onward). This differs ON PURPOSE from `max_recovery_from_trough_pct`,
+    which is an INTENSITY metric and DOES include the trough day."""
     g = {}
     for t in config.RECLAIM_UP_GRID:
         g[f"up_reach_day_{t}pct"] = _first_cross_day(highs >= t)
@@ -206,7 +211,7 @@ def reclaim_grid(highs, lows, fwd, trough_idx, trough_price, atr):
     for t in config.RECLAIM_ATR_GRID:
         day = ""
         if can_atr:
-            for i in range(trough_idx, len(high_vals)):
+            for i in range(trough_idx + 1, len(high_vals)):   # day AFTER the trough
                 if (float(high_vals[i]) - trough_price) / atr >= t:
                     day = i + 1
                     break
