@@ -53,6 +53,21 @@ RECLAIM_UP_GRID = [1, 2, 3, 5, 8]      # % above ref_close (forward High)
 RECLAIM_DOWN_GRID = [1, 2, 3, 5, 8]    # % below ref_close (forward Low)
 RECLAIM_ATR_GRID = [0.5, 1.0, 1.5]     # × ATR(14) reclaim above the trough
 
+
+def _atr_label(thr):
+    """ATR threshold -> column-safe label: 0.5->'0_5', 1.0->'1', 1.5->'1_5'."""
+    return str(int(thr)) if float(thr).is_integer() else str(thr).replace(".", "_")
+
+
+# Single source of truth for the reclaim/drop grid column NAMES (day-or-blank per
+# threshold). Used by post_analysis_collector (HEADER + values) AND the dashboard
+# (display sets) — defined here in stdlib-only config so the Cloud dashboard never
+# imports the collector (which pulls yfinance). Keep order stable (append-only).
+RECLAIM_GRID_COLUMNS = (
+    [f"up_reach_day_{t}pct" for t in RECLAIM_UP_GRID]
+    + [f"down_reach_day_{t}pct" for t in RECLAIM_DOWN_GRID]
+    + [f"reclaim_atr_day_{_atr_label(t)}x" for t in RECLAIM_ATR_GRID])
+
 # ── Intraday scan (M2) ───────────────────────────────────────────────────────
 INTRADAY_SCAN_INTERVAL_MIN = 10      # cadence (workflow + cron-job.org pinger)
 INTRADAY_DROP_THRESHOLD = 10.0       # % below the day's OPEN (current price)

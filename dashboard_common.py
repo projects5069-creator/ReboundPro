@@ -88,7 +88,9 @@ NUM_WATCH = ["drop_pct_from_open", "close_pct_from_open", "pct_change_prevclose"
              "prior_decline_20d_pct", "prior_decline_60d_pct",
              # research-based context signals (M3)
              "vix_level", "drop_day_rel_volume",
-             "sector_momentum_5d", "sector_momentum_20d"]
+             "sector_momentum_5d", "sector_momentum_20d",
+             # descriptive ATR features (M3 — Vardan-gap)
+             "atr_14", "drop_in_atr"]
 NUM_POST = ["ref_close", "max_recovery_pct", "max_further_drop_pct",
             "last_close_pct", "forward_days_available", "horizon",
             "day_of_max_recovery", "day_of_max_drop",
@@ -96,7 +98,8 @@ NUM_POST = ["ref_close", "max_recovery_pct", "max_further_drop_pct",
             "trough_price", "trough_day",
             "recovery_from_trough_pct", "max_recovery_from_trough_pct"] \
     + [f"max_recovery_{w}d" for w in config.POST_ANALYSIS_SUBWINDOWS] \
-    + [f"max_further_drop_{w}d" for w in config.POST_ANALYSIS_SUBWINDOWS]
+    + [f"max_further_drop_{w}d" for w in config.POST_ANALYSIS_SUBWINDOWS] \
+    + config.RECLAIM_GRID_COLUMNS   # reclaim/drop grid (day-or-blank) — Vardan-gap
 NUM_SUMMARY = ["total_finviz_candidates", "passed_floor", "below_min_price",
                "below_min_cap", "below_min_adv", "drop_below_threshold", "other_rejects"]
 NUM_TS = ["price", "pct_from_open", "volume"]
@@ -122,11 +125,12 @@ INT_COLS = {
     "trough_day",
     "total_finviz_candidates", "passed_floor", "below_min_price", "below_min_cap",
     "below_min_adv", "drop_below_threshold", "other_rejects",
-}
+} | set(config.RECLAIM_GRID_COLUMNS)   # grid values are D+n day counts (or blank)
 FLOAT_COLS = {
     "price", "open", "high", "low_so_far", "prev_close", "rsi_14",
     "volume_ratio", "ref_close", "first_cross_price", "intraday_low",
     "ref_close_window", "trough_price", "vix_level", "drop_day_rel_volume",
+    "atr_14", "drop_in_atr",
 }
 
 # Finviz-style fundamental categories for the stock card (display grouping only).

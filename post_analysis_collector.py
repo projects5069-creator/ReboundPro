@@ -25,17 +25,6 @@ log = logging.getLogger("collector")
 logging.basicConfig(level=logging.INFO, format="%(asctime)s %(levelname)-7s %(message)s",
                     datefmt="%H:%M:%S")
 
-def _atr_label(thr):
-    """ATR threshold -> column-safe label: 0.5->'0_5', 1.0->'1', 1.5->'1_5'."""
-    return str(int(thr)) if float(thr).is_integer() else str(thr).replace(".", "_")
-
-
-# Reclaim/drop grid columns (day-or-blank per threshold; see config.RECLAIM_*).
-# Descriptive forward-window labels — generalise touched_up/touched_down. M5-safe.
-_GRID_COLS = ([f"up_reach_day_{t}pct" for t in config.RECLAIM_UP_GRID]
-              + [f"down_reach_day_{t}pct" for t in config.RECLAIM_DOWN_GRID]
-              + [f"reclaim_atr_day_{_atr_label(t)}x" for t in config.RECLAIM_ATR_GRID])
-
 HEADER = [
     "scan_date", "ticker", "ref_close", "horizon", "forward_days_available", "status",
     "max_recovery_pct", "day_of_max_recovery", "max_further_drop_pct", "day_of_max_drop",
@@ -55,7 +44,7 @@ HEADER = [
   ] + [  # hypothesis tags — carried from the watchlist event (NOT recomputed here).
     "drop_kind",                       # intraday_drop | gradual_drop  (blank if unknown)
     "source",                          # eod_close | gradual_eod | intraday  (blank if unknown)
-  ] + _GRID_COLS
+  ] + config.RECLAIM_GRID_COLUMNS
 
 
 def _event_tags(row, idx):
@@ -215,7 +204,7 @@ def reclaim_grid(highs, lows, fwd, trough_idx, trough_price, atr):
                 if (float(high_vals[i]) - trough_price) / atr >= t:
                     day = i + 1
                     break
-        g[f"reclaim_atr_day_{_atr_label(t)}x"] = day
+        g[f"reclaim_atr_day_{config._atr_label(t)}x"] = day
     return g
 
 
