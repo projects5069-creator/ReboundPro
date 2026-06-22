@@ -21,3 +21,17 @@ target-version = "py311"
 
 [tool.pytest.ini_options]
 testpaths = ["tests"]
+pythonpath = ["."]
+
+# Dev/test deps. Collector scripts (scanner/collector/intraday) import these but
+# run in GitHub Actions (pip-installed there). Listed here so `uv run pytest`
+# resolves the full test env locally without a manual --with chain.
+[dependency-groups]
+dev = [
+    "pytest",
+    "numpy",
+    "pytz",
+    "yfinance",
+    "exchange_calendars",
+    "finvizfinance",
+]

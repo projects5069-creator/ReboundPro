@@ -89,6 +89,15 @@ def atr_14(h: pd.DataFrame):
     return round(v, 2) if v == v else None
 
 
+def drop_in_atr(drop_dollars, atr):
+    """How many ATRs the drop spanned = drop_dollars / ATR(14)$. The caller passes
+    the $ drop that matches its drop_kind definition (intraday: open-intraday_low ;
+    gradual: ref_close_window-close). DESCRIPTIVE feature only — never a signal."""
+    if atr is None or not atr or drop_dollars is None:
+        return None
+    return round(drop_dollars / atr, 2)
+
+
 def prior_context(h, prior, cl):
     """DESCRIPTIVE prior-decline context at capture — collection only, NOT a signal.
 
@@ -284,6 +293,7 @@ def build_snapshot(row, scan_date, spy_chg, vix, now_et):
     mom5, mom20 = etf_momentum(etf, scan_date) if etf else (None, None)
     drop_day_rel_vol = round(vol / avg_vol_20, 2) if avg_vol_20 else ""
 
+    atr = atr_14(h)   # Wilder ATR(14)$ as-of scan_date — single ATR source for this row
     snap = {
         "scan_date": str(scan_date), "ticker": ticker, "exchange": row.get("_exchange", ""),
         "company_name": row.get("Company", ""), "sector": sector,
@@ -298,6 +308,11 @@ def build_snapshot(row, scan_date, spy_chg, vix, now_et):
         "volume": vol, "avg_volume_20d": int(avg_vol_20) if avg_vol_20 else "",
         "adv_dollar": int(adv_dollar), "volume_ratio": round(vol / avg_vol_20, 2) if avg_vol_20 else "",
         "rsi_14": rsi_14(h["Close"]),
+        # descriptive features (M5-safe). intraday $-drop = open - intraday_low; the
+        # low (and thus drop_in_atr) keeps updating until EOD, stabilising at close —
+        # the (scan_date,ticker) upsert overwrites in place each run.
+        "atr_14": atr,
+        "drop_in_atr": drop_in_atr(o - lo, atr),
         "spy_change_pct": spy_chg, "sector_etf": etf or "",
         "sector_etf_change_pct": sec_chg, "market_regime": market_regime(spy_chg),
         "drop_type": classify_drop_type(spy_chg, sec_chg),

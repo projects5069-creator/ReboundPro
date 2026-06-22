@@ -230,6 +230,12 @@ WATCHLIST_HEADER = [
     "drop_day_rel_volume",
     "sector_momentum_5d",
     "sector_momentum_20d",
+    # descriptive ATR features (M5-safe; APPEND ONLY). atr_14 = Wilder ATR(14) in $
+    # as-of scan_date (single ATR source — also read by the post_analysis reclaim
+    # grid). drop_in_atr = the day's $-drop / atr_14, numerator matching each
+    # drop_kind (intraday: open-intraday_low ; gradual: ref_close_window-close).
+    "atr_14",
+    "drop_in_atr",
 ]
 CREDS_PATH = os.path.join(os.path.dirname(__file__), "google_credentials.json")
 
