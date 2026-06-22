@@ -77,6 +77,18 @@ def rsi_14(close: pd.Series):
     return round(v, 2) if v == v else None
 
 
+def atr_14(h: pd.DataFrame):
+    """Wilder ATR(14) in PRICE units, point-in-time. Mirrors rsi_14 (scalar-or-None,
+    rounded). DESCRIPTIVE feature only — never a signal/threshold (M5 boundary)."""
+    if h is None or len(h) < 15:
+        return None
+    high, low, close = h["High"], h["Low"], h["Close"]
+    pc = close.shift(1)
+    tr = pd.concat([high - low, (high - pc).abs(), (low - pc).abs()], axis=1).max(axis=1)
+    v = float(tr.ewm(com=13, min_periods=14).mean().iloc[-1])
+    return round(v, 2) if v == v else None
+
+
 def prior_context(h, prior, cl):
     """DESCRIPTIVE prior-decline context at capture — collection only, NOT a signal.
 
