@@ -234,9 +234,11 @@ def resolve_sheet_id():
 QUOTA_MSG = ("🕒 הנתונים זמנית לא זמינים — חריגת-מכסה ב-Google Sheets API "
              "(יותר מדי קריאות בו-זמנית). הנתונים יחזרו תוך כדקה — נסה רענון.")
 
-# cache TTL raised 300→900s: the data changes a few times/day, so re-reading the
-# Sheet every 5 min only burns the per-minute read quota for nothing.
-CACHE_TTL = 900
+# cache TTL 300s: live monitoring wants data <=5 min old. The status banner
+# auto-refreshes every 300s (st.fragment), so TTL matches the refresh cadence.
+# Tradeoff: more frequent Sheet reads than the old 900s — acceptable for a
+# low-viewer monitoring dashboard.
+CACHE_TTL = 300
 
 
 def _coerce(header, rows, num_cols):
@@ -448,7 +450,7 @@ def sidebar_controls(sheet_id):
         if st.button("🔄 Refresh data", type="primary"):
             st.cache_data.clear()
             st.rerun()
-        st.caption("נתונים נקראים מ-Google Sheet (cache 15 דק').")
+        st.caption("נתונים נקראים מ-Google Sheet (cache 5 דק' · רענון אוטומטי כל 5 דק').")
         st.caption(f"Sheet: …{sheet_id[-8:]}")
         try:
             st.caption(f"SA: {sm.service_account_email()}")
@@ -989,9 +991,14 @@ def _health_age(run_at):
         return str(run_at), False
 
 
+@st.fragment(run_every="300s")
 def render_health_banner(sheet_id=None):
     """Top-of-home status banner from the latest health_log run. Resolves the
-    sheet id internally (same mechanism as render()) when not supplied."""
+    sheet id internally (same mechanism as render()) when not supplied.
+
+    Wrapped in st.fragment(run_every="300s"): only this banner re-runs every
+    5 min (matching CACHE_TTL=300), pulling a fresh health_log read without a
+    full-page rerun — so user selections elsewhere are never reset."""
     if sheet_id is None:
         sheet_id = resolve_sheet_id()
     if not sheet_id:
@@ -1022,6 +1029,61 @@ def render_health_banner(sheet_id=None):
         st.success(base)
     else:
         st.info(base)
+
+
+@st.fragment(run_every="300s")
+def render_live_status(sheet_id=None):
+    """Descriptive intraday "live status" table: the latest intraday point per
+    tracked (scan_date, ticker) from intraday_timeseries — current price, % from
+    that day's open, update time (ET) and days-since-entry (D+n). Sorted by
+    intraday move SIZE (descriptive ordering only).
+
+    VIEW-ONLY — NO score / signal / ranking / entry decision (M5 boundary).
+    Wrapped in st.fragment(run_every="300s") like the health banner, matching
+    CACHE_TTL=300: only this table re-runs every 5 min, so nothing else resets.
+    intraday_timeseries only grows during market hours, so the table "breathes"
+    only when the market is open; off-session it shows the last available point."""
+    if sheet_id is None:
+        sheet_id = resolve_sheet_id()
+    if not sheet_id:
+        return
+    page_header("📡 מצב חי — תוך-יומי",
+                VIEW_ONLY + " · תוך-יומי · נושם בשעות-מסחר בלבד · ≠ סיווג הריבאונד היומי")
+    try:
+        ts = load(sheet_id, config.TAB_TIMESERIES, ["price", "pct_from_open", "volume"])
+    except gspread.exceptions.APIError as e:
+        st.info(QUOTA_MSG if _is_quota(e) else f"מצב-חי לא נקרא מה-Sheet: {e}")
+        return
+    if ts.empty or "timestamp" not in ts.columns:
+        st.info("intraday_timeseries עדיין ריק — יתמלא בריצת הסורק התוך-יומי הבאה (שעות-מסחר).")
+        return
+
+    ts = ts[ts["timestamp"].astype(str).str.len() >= 16].copy()
+    if ts.empty:
+        st.info("אין עדיין נקודות תוך-יומיות תקינות.")
+        return
+    ts["_date"] = ts["timestamp"].astype(str).str[:10]
+    # days-since-entry (D+n) = distinct trading dates seen for the event minus 1
+    # (D0). Derived from the data itself — no calendar dependency / heavy import.
+    dn = (ts.groupby(["scan_date", "ticker"])["_date"].nunique() - 1).rename("D+n")
+    # latest intraday point per (scan_date, ticker) — string ts sorts chronologically
+    latest = (ts.sort_values("timestamp")
+                .groupby(["scan_date", "ticker"], as_index=False).tail(1)
+                .merge(dn, on=["scan_date", "ticker"], how="left"))
+
+    today = pd.Timestamp.now(tz="America/Lima").strftime("%Y-%m-%d")
+    newest = latest["timestamp"].astype(str).max()
+    if newest[:10] < today:
+        st.caption(f"🕒 השוק סגור — מוצג המצב האחרון מ-{newest} (ET). יתעדכן עם פתיחת-המסחר.")
+    else:
+        st.caption(f"🟢 חי · עדכון אחרון {newest} (ET) · {len(latest)} מניות במעקב")
+
+    disp = (latest[["ticker", "scan_date", "D+n", "price", "pct_from_open", "timestamp"]]
+            .rename(columns={"price": "price_now", "pct_from_open": "pct_open",
+                             "timestamp": "upd_et"}))
+    disp = (disp.assign(_abs=disp["pct_open"].abs())
+                .sort_values("_abs", ascending=False).drop(columns="_abs"))
+    show_table(disp)
 
 
 def render_system_health(sheet_id=None):
