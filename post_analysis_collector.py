@@ -25,6 +25,17 @@ log = logging.getLogger("collector")
 logging.basicConfig(level=logging.INFO, format="%(asctime)s %(levelname)-7s %(message)s",
                     datefmt="%H:%M:%S")
 
+def _atr_label(thr):
+    """ATR threshold -> column-safe label: 0.5->'0_5', 1.0->'1', 1.5->'1_5'."""
+    return str(int(thr)) if float(thr).is_integer() else str(thr).replace(".", "_")
+
+
+# Reclaim/drop grid columns (day-or-blank per threshold; see config.RECLAIM_*).
+# Descriptive forward-window labels — generalise touched_up/touched_down. M5-safe.
+_GRID_COLS = ([f"up_reach_day_{t}pct" for t in config.RECLAIM_UP_GRID]
+              + [f"down_reach_day_{t}pct" for t in config.RECLAIM_DOWN_GRID]
+              + [f"reclaim_atr_day_{_atr_label(t)}x" for t in config.RECLAIM_ATR_GRID])
+
 HEADER = [
     "scan_date", "ticker", "ref_close", "horizon", "forward_days_available", "status",
     "max_recovery_pct", "day_of_max_recovery", "max_further_drop_pct", "day_of_max_drop",
@@ -44,7 +55,7 @@ HEADER = [
   ] + [  # hypothesis tags — carried from the watchlist event (NOT recomputed here).
     "drop_kind",                       # intraday_drop | gradual_drop  (blank if unknown)
     "source",                          # eod_close | gradual_eod | intraday  (blank if unknown)
-  ]
+  ] + _GRID_COLS
 
 
 def _event_tags(row, idx):
@@ -170,8 +181,41 @@ def daily_series(fwd, ref_close, scan_date, ticker, drop_kind="", source=""):
     return rows
 
 
+def _first_cross_day(mask):
+    """1-based D+n of the first True in a forward-aligned boolean series, else ''."""
+    for i, v in enumerate(mask.values):
+        if bool(v):
+            return i + 1
+    return ""
+
+
+def reclaim_grid(highs, lows, fwd, trough_idx, trough_price, atr):
+    """Descriptive forward-window grid (day-or-blank per threshold). M5-safe.
+    up/down grids = first D+n the forward High/Low crossed +/-thr% of ref_close
+    (generalise touched_up/touched_down). ATR grid = first D+n the reclaim ABOVE
+    the trough = (High - trough)/ATR reached thr ATRs — measured from the trough day
+    onward (inclusive, matching max_recovery_from_trough_pct), normalised by the
+    as-of-D0 ATR(14)$ supplied by the caller (watchlist atr_14). NEVER a signal."""
+    g = {}
+    for t in config.RECLAIM_UP_GRID:
+        g[f"up_reach_day_{t}pct"] = _first_cross_day(highs >= t)
+    for t in config.RECLAIM_DOWN_GRID:
+        g[f"down_reach_day_{t}pct"] = _first_cross_day(lows <= -t)
+    can_atr = bool(atr) and atr > 0 and trough_price is not None
+    high_vals = list(fwd["High"].values)
+    for t in config.RECLAIM_ATR_GRID:
+        day = ""
+        if can_atr:
+            for i in range(trough_idx, len(high_vals)):
+                if (float(high_vals[i]) - trough_price) / atr >= t:
+                    day = i + 1
+                    break
+        g[f"reclaim_atr_day_{_atr_label(t)}x"] = day
+    return g
+
+
 def compute_outcome(ticker, scan_date, ref_close=None, horizon=None,
-                    drop_kind="", source=""):
+                    drop_kind="", source="", atr=None):
     """Forward outcome relative to ref_close (default = scan_date close). drop_kind
     and source are carried verbatim from the watchlist event onto the post row and
     every per-day forward row (not recomputed here)."""
@@ -265,6 +309,7 @@ def compute_outcome(ticker, scan_date, ref_close=None, horizon=None,
             HEADER[12]: touched_dn, "day_touched_down": day_dn,
             "last_close_pct": round(float(closes.iloc[-1]), 2),
             "dN_date": str(fwd.index[-1].date()), **sub, **trough, **shd,
+            **reclaim_grid(highs, lows, fwd, trough_idx, trough_price, atr),
             # ADDITIVE: per-day forward series (not in post HEADER → to_matrix
             # ignores it; written separately to forward_daily). Reuses fwd above.
             "_daily_rows": daily_series(fwd, ref_close, scan_date, ticker,
@@ -370,7 +415,8 @@ def main():
         sd = datetime.strptime(r[idx["scan_date"]], "%Y-%m-%d").date()
         ref = float(r[idx["price"]]) if r[idx["price"]] else None
         dk, src = _event_tags(r, idx)        # carry hypothesis tags from the watchlist event
-        out = compute_outcome(t, sd, ref_close=ref, drop_kind=dk, source=src)
+        atr = float(r[idx["atr_14"]]) if "atr_14" in idx and r[idx["atr_14"]] else None
+        out = compute_outcome(t, sd, ref_close=ref, drop_kind=dk, source=src, atr=atr)
         rows.append(out)
         log.info("%s %s -> %s (rec=%s drop=%s)", sd, t, out["status"],
                  out.get("max_recovery_pct"), out.get("max_further_drop_pct"))

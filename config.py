@@ -46,6 +46,13 @@ TOUCH_DOWN_PCT = 8.0                 # "did it touch -Y% from scan close"
 # a genuine >100% single-day move is almost always an artifact, not a real bounce.
 SPLIT_HALT_JUMP_PCT = 100.0
 
+# Reclaim/drop grid (M3 — DESCRIPTIVE forward-window labels; generalises
+# touched_up/touched_down). Each threshold gets a "first D+n it was reached"
+# column (blank if never). NO scoring/decision — measurement only (M5 boundary).
+RECLAIM_UP_GRID = [1, 2, 3, 5, 8]      # % above ref_close (forward High)
+RECLAIM_DOWN_GRID = [1, 2, 3, 5, 8]    # % below ref_close (forward Low)
+RECLAIM_ATR_GRID = [0.5, 1.0, 1.5]     # × ATR(14) reclaim above the trough
+
 # ── Intraday scan (M2) ───────────────────────────────────────────────────────
 INTRADAY_SCAN_INTERVAL_MIN = 10      # cadence (workflow + cron-job.org pinger)
 INTRADAY_DROP_THRESHOLD = 10.0       # % below the day's OPEN (current price)
