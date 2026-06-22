@@ -1033,16 +1033,21 @@ def render_health_banner(sheet_id=None):
 
 @st.fragment(run_every="300s")
 def render_live_status(sheet_id=None):
-    """Descriptive intraday "live status" table: the latest intraday point per
-    tracked (scan_date, ticker) from intraday_timeseries — current price, % from
-    that day's open, update time (ET) and days-since-entry (D+n). Sorted by
-    intraday move SIZE (descriptive ordering only).
+    """Descriptive intraday "live status" view: two clearly-separated overview
+    layers — (1) INTRADAY KPIs that breathe this session and (2) a DAILY
+    classification layer that updates at 22:30 — descriptive pies (kind / direction
+    / D-bucket), and a per-event table: latest intraday point per (scan_date,
+    ticker) from intraday_timeseries with reference price, % from open, % from
+    reference, an in-row price sparkline and D+n.
+
+    D+n is derived from the GLOBAL trading calendar (union of all dates seen in
+    intraday_timeseries + forward_daily), so every event sharing a scan_date gets
+    the SAME D+n regardless of its own gappy sampling.
 
     VIEW-ONLY — NO score / signal / ranking / entry decision (M5 boundary).
-    Wrapped in st.fragment(run_every="300s") like the health banner, matching
-    CACHE_TTL=300: only this table re-runs every 5 min, so nothing else resets.
-    intraday_timeseries only grows during market hours, so the table "breathes"
-    only when the market is open; off-session it shows the last available point."""
+    Wrapped in st.fragment(run_every="300s"), matching CACHE_TTL=300: only this
+    view re-runs every 5 min, so nothing else resets. intraday_timeseries grows
+    only during market hours, so it "breathes" only when the market is open."""
     if sheet_id is None:
         sheet_id = resolve_sheet_id()
     if not sheet_id:
@@ -1051,6 +1056,9 @@ def render_live_status(sheet_id=None):
                 VIEW_ONLY + " · תוך-יומי · נושם בשעות-מסחר בלבד · ≠ סיווג הריבאונד היומי")
     try:
         ts = load(sheet_id, config.TAB_TIMESERIES, ["price", "pct_from_open", "volume"])
+        data = load_many(sheet_id, {config.TAB_WATCHLIST: NUM_WATCH,
+                                    config.TAB_POST: NUM_POST,
+                                    config.TAB_FORWARD_DAILY: NUM_FDAILY})
     except gspread.exceptions.APIError as e:
         st.info(QUOTA_MSG if _is_quota(e) else f"מצב-חי לא נקרא מה-Sheet: {e}")
         return
@@ -1063,21 +1071,31 @@ def render_live_status(sheet_id=None):
         st.info("אין עדיין נקודות תוך-יומיות תקינות.")
         return
     ts["_date"] = ts["timestamp"].astype(str).str[:10]
-    # days-since-entry (D+n) = distinct trading dates seen for the event minus 1
-    # (D0). Derived from the data itself — no calendar dependency / heavy import.
-    dn = (ts.groupby(["scan_date", "ticker"])["_date"].nunique() - 1).rename("dn")
+    watch = coalesce_kind(data[config.TAB_WATCHLIST])
+    fdaily = data[config.TAB_FORWARD_DAILY]
+
+    # D+n from the GLOBAL trading calendar = union of all dates seen in
+    # intraday_timeseries + forward_daily. Every event sharing a scan_date gets the
+    # SAME D+n regardless of its own gappy sampling; the union naturally skips
+    # non-trading days (weekends, Juneteenth) since no data lands on them.
+    fd_dates = (set(fdaily["date"].astype(str).str[:10]) if "date" in fdaily.columns
+                else set())
+    cal = sorted((set(ts["_date"]) | fd_dates) - {""})
+    gmax = cal[-1] if cal else ""
+    dn_by_sd = {sd: sum(1 for c in cal if sd < c <= gmax)
+                for sd in ts["scan_date"].dropna().unique()}
+
     # latest intraday point per (scan_date, ticker) — string ts sorts chronologically
     latest = (ts.sort_values("timestamp")
-                .groupby(["scan_date", "ticker"], as_index=False).tail(1)
-                .merge(dn, on=["scan_date", "ticker"], how="left"))
+                .groupby(["scan_date", "ticker"], as_index=False).tail(1).copy())
+    latest["dn"] = latest["scan_date"].map(dn_by_sd).astype("Int64")
+    # intraday price series per event (ordered) — for the in-row sparkline
+    spark = (ts.sort_values("timestamp").groupby(["scan_date", "ticker"])["price"]
+               .apply(list).rename("spark"))
+    latest = latest.merge(spark, on=["scan_date", "ticker"], how="left")
 
-    # reference price + drop_kind joined from the watchlist event (NOT recomputed):
+    # reference price + drop_kind from the watchlist event (NOT recomputed):
     # intraday reference = open (drop-day open); gradual reference = ref_close_window.
-    try:
-        watch = load(sheet_id, config.TAB_WATCHLIST, ["open", "ref_close_window"])
-    except gspread.exceptions.APIError as e:
-        st.info(QUOTA_MSG if _is_quota(e) else f"מצב-חי לא נקרא מה-Sheet: {e}")
-        return
     wkeep = [c for c in ("scan_date", "ticker", "open", "ref_close_window", "drop_kind")
              if c in watch.columns]
     wsub = (watch[wkeep].drop_duplicates(["scan_date", "ticker"]) if not watch.empty
@@ -1086,14 +1104,13 @@ def render_live_status(sheet_id=None):
     if "drop_kind" not in latest.columns:
         latest["drop_kind"] = "intraday_drop"
     latest["drop_kind"] = latest["drop_kind"].replace("", "intraday_drop").fillna("intraday_drop")
-
-    # reference: open for intraday_drop, ref_close_window for gradual_drop
     is_grad = latest["drop_kind"] == "gradual_drop"
     ref = latest["open"].where(~is_grad, latest.get("ref_close_window"))
     latest["reference"] = pd.to_numeric(ref, errors="coerce")
     latest["pct_from_ref"] = ((latest["price"] - latest["reference"])
                               / latest["reference"].where(latest["reference"] > 0)
                               * 100).round(2)
+    pf = pd.to_numeric(latest["pct_from_open"], errors="coerce")
 
     today = pd.Timestamp.now(tz="America/Lima").strftime("%Y-%m-%d")
     newest = latest["timestamp"].astype(str).max()
@@ -1102,8 +1119,45 @@ def render_live_status(sheet_id=None):
     else:
         st.caption(f"🟢 חי · עדכון אחרון {newest} (ET) · {len(latest)} מניות במעקב")
 
-    # header-style filters — same idiom as _watchlist; default = all
+    # ── overview layer 1: INTRADAY KPIs (breathing — THIS session's move) ────────
+    st.markdown("##### 📈 תוך-יומי · נושם בשעות-מסחר")
+    mover = latest.loc[pf.abs().idxmax()] if pf.notna().any() else None
+    ic = st.columns(4)
+    ic[0].metric("עולות היום 🟢", int((pf > 0).sum()), border=True)
+    ic[1].metric("יורדות היום 🔴", int((pf < 0).sum()), border=True)
+    ic[2].metric("תנועה יומית ממוצעת",
+                 f"{pf.mean():+.2f}%" if pf.notna().any() else "—", border=True)
+    ic[3].metric("המזיזה ביותר",
+                 f"{mover['ticker']} {float(mover['pct_from_open']):+.1f}%"
+                 if mover is not None else "—", border=True)
+
+    # ── overview layer 2: DAILY classification (updates 22:30) — reuse
+    # build_overview_table so the recovering/down/falling buckets are defined once.
+    st.markdown("##### 🗓️ סיווג יומי · מתעדכן 22:30 (סיווג ריבאונד — לא נתון תוך-יומי)")
+    tbl = build_overview_table(watch, data[config.TAB_POST], fdaily)
+    avg_day = tbl["pct_from_entry"].dropna().mean()
+    dc = st.columns(4)
+    dc[0].metric("סה\"כ במעקב", len(tbl), border=True)
+    dc[1].metric("🟢 מתאוששות", int((tbl["status"] == "recovering").sum()), border=True)
+    dc[2].metric("🔴🟠 עדיין-למטה",
+                 int(tbl["status"].isin(["down", "falling"]).sum()), border=True)
+    dc[3].metric("תנועה ממוצעת (יומי)",
+                 f"{avg_day:+.1f}%" if pd.notna(avg_day) else "—", border=True)
+
+    # ── descriptive pies (Plotly) — split / direction / D-bucket ─────────────────
     KIND_LABELS = {"intraday_drop": "⚡ intraday", "gradual_drop": "🐢 gradual"}
+    pie = latest.assign(
+        סוג=latest["drop_kind"].map(KIND_LABELS).fillna(latest["drop_kind"]),
+        כיוון=pf.map(lambda v: "עולה 🟢" if pd.notna(v) and v >= 0 else "יורד 🔴"),
+        Dbucket=latest["dn"].map(lambda d: "D0" if pd.notna(d) and d == 0
+                                 else ("D1-3" if pd.notna(d) and d <= 3 else "D4+")),
+    )
+    pc = st.columns(3)
+    plot(pc[0], px.pie(pie, names="סוג", title="לפי סוג", hole=0.4))
+    plot(pc[1], px.pie(pie, names="כיוון", title="לפי כיוון-היום", hole=0.4))
+    plot(pc[2], px.pie(pie, names="Dbucket", title="לפי D-bucket", hole=0.4))
+
+    # ── per-event table — filters + click-sort + in-row price sparkline ──────────
     fc = st.columns(2)
     kinds = sorted(latest["drop_kind"].dropna().unique())
     sel_kind = fc[0].multiselect("סוג", kinds, default=kinds,
@@ -1117,22 +1171,24 @@ def render_live_status(sheet_id=None):
 
     # initial order: |daily move| descending (descriptive ordering only; the table
     # itself is click-sortable by any column header).
-    view = view.assign(_abs=view["pct_from_open"].abs()).sort_values("_abs", ascending=False)
+    view = view.assign(_abs=pd.to_numeric(view["pct_from_open"], errors="coerce").abs()
+                       ).sort_values("_abs", ascending=False)
     disp = view.assign(**{"סוג": view["drop_kind"].map(KIND_LABELS).fillna(view["drop_kind"])})[
         ["ticker", "סוג", "scan_date", "dn", "reference", "price",
-         "pct_from_open", "pct_from_ref", "volume", "timestamp"]]
+         "pct_from_open", "pct_from_ref", "volume", "spark", "timestamp"]]
 
     # reuse styled() (%, 2dp, thousands) + sign_colors() for per-sign colour on the
-    # two pct columns — no duplicated formatting/colour logic.
+    # two pct columns — no duplicated formatting/colour logic. (spark is an object
+    # column → styled() skips it; LineChartColumn renders it.)
     sty = styled(disp)
     for pcol in ("pct_from_open", "pct_from_ref"):
         sty = sty.apply(lambda s: [f"color: {c}" for c in sign_colors(s)], subset=[pcol])
 
-    # Hebrew header labels + micro-tooltips distinguishing the two % columns.
     cfg = {
         "ticker": st.column_config.Column("טיקר"),
         "scan_date": st.column_config.Column("כניסה"),
-        "dn": st.column_config.Column("D+n", help="ימי-מסחר מאז יום-הצניחה (D0)"),
+        "dn": st.column_config.Column(
+            "D+n", help="ימי-מסחר מ-scan_date (לוח גלובלי; מדלג ימי-שבתון/חג)"),
         "reference": st.column_config.Column(
             "מחיר-ייחוס", help="נקודת-ההתחלה: intraday=open ביום-הצניחה · gradual=ref_close"),
         "price": st.column_config.Column("מחיר נוכחי"),
@@ -1141,6 +1197,8 @@ def render_live_status(sheet_id=None):
         "pct_from_ref": st.column_config.Column(
             "% מהייחוס", help="מאז נקודת-הצניחה: (מחיר נוכחי − מחיר-ייחוס) / מחיר-ייחוס"),
         "volume": st.column_config.Column("נפח"),
+        "spark": st.column_config.LineChartColumn(
+            "מסלול תוך-יומי", help="סדרת-המחיר התוך-יומית של האירוע"),
         "timestamp": st.column_config.Column("עודכן (ET)"),
     }
     st.dataframe(sty, column_config=cfg, hide_index=True, width="stretch")
