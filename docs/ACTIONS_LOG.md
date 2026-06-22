@@ -51,5 +51,7 @@
 
 | 2026-06-19 | _(uncommitted)_ | TASK-C.1 — harness edge נטו בתת-הנזיל (`research/phase0/taskC1_liquid_edge.py`, read-only scope readonly, 0 קריאות-כתיבה). DropsLab∩floor n=591 (541 עם D5, 91.5% כיסוי) ⋈ drops_post. **ממצא: אין edge נטו יציב** — long→D5 net **+0.27%**, day-clustered CI95 [−2.94,+2.22] **כולל 0**; לא מנצח SPY נטו (alpha −0.12%). VIX: כיוון משוחזר (VIX<18 net −4.50% שלילי-מובהק; מוגבר חיובי) → תומך-מנגנון כפריור, אך VIX≥20 לא-מובהק (CI [−10.99,+5.24] שביר); רק 18–20 צר מובהק (data-mining). תואם ספרות (edge בלא-נזיל ש-RB מוציא). תיקון-אגב: yfinance `end` עם רכיב-שעה→strftime. מזכר: `research/phase0/TASK-C1_liquid_edge_memo.md`. **proxy/prior — לא M4=GO, לא M5; §5 ללא שינוי.** אפס נגיעה ב-stubs/scanners/workflows/Sheets-writes. |
 
+| 2026-06-22 | `37b8ab2`→(this) | **Vardan-gap פיצ'רים תיאוריים (v0.2.0)** — מיפוי-פער Vardan→ReboundPro (`docs/VARDAN_GAP_ANALYSIS.md`) ובנייה ב-TDD step-by-step עם עצירות-ביקורת: `scanner.atr_14` (Wilder ATR$, מקור-יחיד) + `drop_in_atr` ב-watchlist (intraday open−low / gradual window-drop); **reclaim/drop grid** ב-post_analysis (13 עמ' יום-או-ריק: up%/down% = superset של touched_up/down + `reclaim_atr_day_*x` מ-trough+1=תזמון-אישור, ≠ max_recovery_from_trough=עוצמה); `config.RECLAIM_GRID_COLUMNS` מקור-שמות יחיד; `scanner --backfill-atr` חד-פעמי; חשיפת-dashboard view-only. אומת בקוד: הקולקטור היומי מעבד-מחדש כל אירוע → גריד מתמלא לבד. + pyproject dev-deps + `pythonpath`. **אפס ניקוד/אות/החלטת-כניסה — גבול M5 נשמר.** 98 טסטים ירוקים. |
+
 ## Next
 <!-- הוסף כאן ערכים חדשים מתוארכים בכל סוף-סשן -->

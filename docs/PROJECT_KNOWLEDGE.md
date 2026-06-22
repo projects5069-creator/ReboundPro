@@ -1,7 +1,7 @@
 # ReboundPro — Project Knowledge (זיכרון תפעולי)
 
 *זהו הזיכרון התפעולי — עובדות-קרקע על המערכת כפי שהיא בפועל. אסטרטגיה יציבה ב-MASTERPLAN; משימות ב-TASKS; היסטוריה ב-ACTIONS_LOG.*
-*עודכן: 2026-06-14 · אבן-דרך נוכחית: **M3 (צבירה)**.*
+*עודכן: 2026-06-22 · אבן-דרך נוכחית: **M3 (צבירה)**.*
 
 ## בשורה אחת
 מערכת מחקר long (סימולציה בלבד) שתופסת point-in-time מניות NASDAQ+NYSE נזילות שצנחו ≥10% תוך-יומי, ואוספת תוצאות D1..D+20 כדי להכריע ב-M4 אם קיים יתרון נטו. אין מנוע מסחר עד M4=go.
@@ -19,11 +19,11 @@
 ## אינוונטר קבצים (קוד)
 | קובץ | תפקיד |
 |------|-------|
-| `scanner.py` | EOD: Finviz→רצפת-נזילות→snapshot+regime→`watchlist_live`; כותב `daily_summary` + `fundamentals_snapshot` inline |
+| `scanner.py` | EOD: Finviz→רצפת-נזילות→snapshot+regime→`watchlist_live`; כותב `daily_summary` + `fundamentals_snapshot` inline. helpers `atr_14`/`drop_in_atr` (פיצ'רים תיאוריים) + `--backfill-atr` (חד-פעמי) |
 | `intraday_scanner.py` | intraday ~10ד': מסלול תוך-יומי + dedup; `is_market_hours()` guard |
 | `fundamentals.py` | Finviz quote ~89 שדות → `fundamentals_snapshot` (raw+`_num`) |
 | `catalyst.py` | Finnhub news D-3..D + earnings-flag → `news_snapshot` (raw בלבד) |
-| `post_analysis_collector.py` | D1..D+20 + תת-חלונות D+3/5/10/20; halt/delist/pending מפורש; **recovery-from-trough** (היפוך מהשפל); **split/halt detector** (`detect_split_halt` → `split_halt_flag`/`split_halt_reason`, flag לא-הרסני) |
+| `post_analysis_collector.py` | D1..D+20 + תת-חלונות D+3/5/10/20; halt/delist/pending מפורש; **recovery-from-trough** (היפוך מהשפל); **split/halt detector** (`detect_split_halt` → `split_halt_flag`/`split_halt_reason`, flag לא-הרסני); **reclaim/drop grid** (`reclaim_grid` → `config.RECLAIM_GRID_COLUMNS`, תיאורי) |
 | `intraday_timeseries.py` | M3 מעקב מדורג → `intraday_timeseries`: D0–D3 כל 10ד', D4–D20 ~3/יום (open/mid/close); key=(scan_date,ticker,timestamp); self-gating לחלונות D4–D20 (עמיד לדריפט-cron); רוכב על טריגר ה-intraday; floor יורש מ-watchlist; hours-guard מ-`intraday_scanner` |
 | `health_monitor.py` | M3 סוכן-בקרת-בריאות: 10 בדיקות-צינור / 5 עמודים (Freshness/Volume/Schema/Field/Ops); `--morning`/`--evening`; exit 0/1/2; כותב טאב-בקרה `health_log` ב-Sheet (היחיד שנכתב; שאר הטאבים read-only) + `health_log.jsonl` מקומי. **בקרת-קלטים בלבד — לא מנקד/מפרש/נוגע ב-recovery (לא edge).** schema-drift שומר מבאג TAB_TIMESERIES. ראה docs/MONITORING.md |
 | `pages/3_System_Health.py` | דף-תקינות (view-only): היסטוריית-ריצות מ-`health_log` + גרף-מגמה + טבלה מסוננת; באנר-סטטוס בעמוד-הבית (`dashboard.py`). בקרה תפעולית בלבד |
@@ -56,6 +56,7 @@ Streamlit Cloud, נפרס מ-`dashboard.py` (branch `main`). Cloud מתקין מ
   - **כיסוי:** prior-decline מתמלא גם לשורות source=intraday דרך `scanner.backfill_intraday_prior_context` (ריצת-EOD, אותו scan_date). 3 סממני-M3.7 עדיין ריקים ל-intraday-live (נאספים ב-scanner+gradual; להרחבה עתידית).
   - (M3.8.1) **backfill חד-פעמי:** `python scanner.py --backfill-context` ממלא את 8 שדות-ההקשר לשורות watchlist ישנות שחסר להן (point-in-time לפי scan_date של כל שורה; upsert חלקי merge-safe; לא ב-workflow היומי). תיקון נלווה: cache של `vix_close`/`etf_momentum` לפי (symbol,scan_date) — נכון לבקפיל רב-תאריכי.
   - (M3.8) **split/halt detector** (הגנת-תקפות M4): `split_halt_flag`/`split_halt_reason` ב-post_analysis — מסמן reverse-split/halt artifacts (קפיצת-split = "recovery" מזויף של מאות %). מקור-אמת = yf split-feed (עמודת `Stock Splits` ב-history, אפס קריאה) + גיבוי jump>`SPLIT_HALT_JUMP_PCT=100` + halt_gap. **flag לא-הרסני — הנתון הגולמי נשמר; M4 מחריג שורות מסומנות ומדווח contamination%** (MASTERPLAN §5).
+  - (M3.9) **Vardan-gap — ATR + reclaim/drop grid** (תיאורי, **פיצ'רים לא אותות**; M5-safe): ב-watchlist `atr_14` (Wilder ATR(14)$ נכון ל-scan_date — **מקור-ATR יחיד**, גם נקרא ע"י הקולקטור) + `drop_in_atr` (גודל-הצניחה ב-ATR; intraday=open−low_so_far, gradual=ref_close_window−price). ב-post_analysis **גריד**: `up_reach_day_{1,2,3,5,8}pct`, `down_reach_day_{1,2,3,5,8}pct` (יום-או-ריק; **superset** של `touched_up_5pct`/`touched_down_8pct` הקיימים), ו-`reclaim_atr_day_{0_5,1,1_5}x` (reclaim מעל השפל ב-יחידות-ATR, נמדד מ-**היום שאחרי השפל** = תזמון-אישור; **שונה במכוון** מ-`max_recovery_from_trough_pct` שכולל את יום-השפל = מדד-עוצמה). מקור-שמות יחיד `config.RECLAIM_GRID_COLUMNS`. **כיסוי:** הגריד מתמלא לכל אירוע בריצת-הקולקטור היומית (re-process מלא של ה-watchlist — מאומת בקוד); backfill נדרש ל-watchlist בלבד: `scanner.py --backfill-atr` (point-in-time, חד-פעמי, לא ב-cron).
 - חלון תוצאות: D1..D+20 (+ תת-חלונות 3/5/10/20).
 - עלות-סטרס M4: 0.50% round-trip.
 
