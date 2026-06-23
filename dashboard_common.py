@@ -1050,14 +1050,14 @@ def _live_build(sheet_id, kind=None):
                                     config.TAB_FORWARD_DAILY: NUM_FDAILY})
     except gspread.exceptions.APIError as e:
         st.info(QUOTA_MSG if _is_quota(e) else f"מצב-חי לא נקרא מה-Sheet: {e}")
-        return None, None, None, None, None
+        return None, None, None, None, None, None
     if ts.empty or "timestamp" not in ts.columns:
         st.info("intraday_timeseries עדיין ריק — יתמלא בריצת הסורק התוך-יומי הבאה (שעות-מסחר).")
-        return None, None, None, None, None
+        return None, None, None, None, None, None
     ts = ts[ts["timestamp"].astype(str).str.len() >= 16].copy()
     if ts.empty:
         st.info("אין עדיין נקודות תוך-יומיות תקינות.")
-        return None, None, None, None, None
+        return None, None, None, None, None, None
     ts["_date"] = ts["timestamp"].astype(str).str[:10]
     watch = coalesce_kind(data[config.TAB_WATCHLIST])
     fdaily = data[config.TAB_FORWARD_DAILY]
@@ -1099,7 +1099,7 @@ def _live_build(sheet_id, kind=None):
         latest = latest[latest["drop_kind"] == kind].copy()
         tbl = tbl[tbl["drop_kind"] == kind].copy()
     today = pd.Timestamp.now(tz="America/Lima").strftime("%Y-%m-%d")
-    return latest, ts, watch, tbl, today
+    return latest, ts, watch, tbl, fdaily, today
 
 
 @st.fragment(run_every="300s")
@@ -1107,7 +1107,7 @@ def _live_overview(sheet_id, kind):
     """Breathing overview — freshness + intraday KPIs + daily-classification KPIs +
     two small pies. Auto-refreshes every 300s. Kept SEPARATE from the selectable
     table so a row selection is never reset by the timer. VIEW-ONLY (M5)."""
-    latest, ts, watch, tbl, today = _live_build(sheet_id, kind)
+    latest, ts, watch, tbl, _fdaily, today = _live_build(sheet_id, kind)
     if latest is None:
         return
     if latest.empty:
@@ -1138,12 +1138,15 @@ def _live_overview(sheet_id, kind):
     # layer 2 — daily classification (reuse build_overview_table buckets)
     st.markdown("##### 🗓️ סיווג יומי · מתעדכן 22:30 (סיווג ריבאונד — לא נתון תוך-יומי)")
     avg_day = tbl["pct_from_entry"].dropna().mean() if not tbl.empty else float("nan")
-    dc = st.columns(4)
+    # all 5 status buckets shown → 🟢 + 🔴🟠 + ⚪ + ⏳ sums to "סה\"כ במעקב" exactly
+    dc = st.columns(6)
     dc[0].metric("סה\"כ במעקב", len(tbl), border=True)
     dc[1].metric("🟢 מתאוששות", int((tbl["status"] == "recovering").sum()), border=True)
     dc[2].metric("🔴🟠 עדיין-למטה",
                  int(tbl["status"].isin(["down", "falling"]).sum()), border=True)
-    dc[3].metric("תנועה ממוצעת (יומי)",
+    dc[3].metric("⚪ יציבה", int((tbl["status"] == "stable").sum()), border=True)
+    dc[4].metric("⏳ ממתין", int((tbl["status"] == "pending").sum()), border=True)
+    dc[5].metric("תנועה ממוצעת (יומי)",
                  f"{avg_day:+.1f}%" if pd.notna(avg_day) else "—", border=True)
 
     # smaller pies — direction + D-bucket (kind is fixed per page → no "by kind" pie)
@@ -1160,17 +1163,42 @@ def _live_overview(sheet_id, kind):
         plot(col, fig)
 
 
-def _live_event_detail(ts, watch, scan_date, ticker):
-    """Descriptive detail panel for one selected event: the FULL intraday price
-    path from intraday_timeseries + the watchlist event facts. VIEW-ONLY."""
-    ev = ts[(ts["scan_date"] == scan_date) & (ts["ticker"] == ticker)].sort_values("timestamp")
+def _dd_mm(d):
+    """'YYYY-MM-DD' -> 'DD.MM' (else the raw string)."""
+    d = str(d)
+    return f"{d[8:10]}.{d[5:7]}" if len(d) >= 10 else d
+
+
+def _live_event_detail(ts, watch, fdaily, scan_date, ticker):
+    """Descriptive detail panel for one selected event: the DAILY path across the
+    forward window — one labelled point per trading day (D+n · DD.MM) from
+    forward_daily (cum_pct_from_ref) — plus the watchlist event facts. VIEW-ONLY,
+    no signal/recommendation. NOT the intraday minute path (that is the in-row
+    sparkline); this shows day-over-day movement on the window."""
     st.markdown(f"#### 🔎 {ticker} · כניסה {scan_date}")
-    if ev.empty:
-        st.info("אין סדרה תוך-יומית לאירוע זה.")
-        return
-    fig = px.line(ev, x="timestamp", y="price", title=f"{ticker} — מסלול תוך-יומי מלא")
-    fig.update_layout(height=320, margin=dict(t=40, b=0, l=0, r=0))
-    plot(st, fig)
+    fd = fdaily[(fdaily["scan_date"] == scan_date) & (fdaily["ticker"] == ticker)].copy() \
+        if fdaily is not None and not fdaily.empty else fdaily
+    if fd is None or fd.empty or "day_offset" not in fd.columns:
+        st.info("אין עדיין נתוני forward_daily לאירוע זה — חלון-הקדימה טרם הבשיל "
+                "(יתמלא בריצת 22:30).")
+        n_days = 0
+    else:
+        fd["_off"] = pd.to_numeric(fd["day_offset"], errors="coerce")
+        fd = fd.dropna(subset=["_off"]).sort_values("_off")
+        ycol = "cum_pct_from_ref" if "cum_pct_from_ref" in fd.columns else "close"
+        fd[ycol] = pd.to_numeric(fd[ycol], errors="coerce")
+        fd["יום"] = [f"D+{int(o)} ({_dd_mm(d)})"
+                     for o, d in zip(fd["_off"], fd.get("date", ""))]
+        # anchor the path at D+0 = 0% (the reference itself) so daily movement reads
+        anchor = pd.DataFrame({"_off": [0.0], "יום": [f"D+0 ({_dd_mm(scan_date)})"],
+                               ycol: [0.0]})
+        plot_df = pd.concat([anchor, fd[["_off", "יום", ycol]]], ignore_index=True)
+        fig = px.line(plot_df, x="יום", y=ycol, markers=True,
+                      title=f"{ticker} — מסלול יומי על-פני החלון (cum% מהייחוס)")
+        fig.update_traces(mode="lines+markers")
+        fig.update_layout(height=320, margin=dict(t=40, b=0, l=0, r=0))
+        plot(st, fig)
+        n_days = int(fd["_off"].max())
     w = watch[(watch["scan_date"] == scan_date) & (watch["ticker"] == ticker)]
     if not w.empty:
         r = w.iloc[0]
@@ -1182,7 +1210,7 @@ def _live_event_detail(ts, watch, scan_date, ticker):
         c[0].metric("סוג", "⚡ intraday" if kind != "gradual_drop" else "🐢 gradual")
         c[1].metric("מחיר-ייחוס", f"{reference:.2f}" if pd.notna(reference) else "—")
         c[2].metric("נפח (כניסה)", f"{vol:,.0f}" if pd.notna(vol) else "—")
-        c[3].metric("נקודות תוך-יומיות", len(ev))
+        c[3].metric("ימי-מסחר בחלון", n_days)
     st.caption("פירוט תיאורי בלבד — אין כאן אות/המלצה.")
 
 
@@ -1201,10 +1229,10 @@ def render_live_status(kind=None):
     _live_overview(sheet_id, kind)             # breathing part (auto-refresh 300s)
 
     # ── selectable table + detail — OUTSIDE the fragment (selection is stable) ────
-    latest, ts, watch, _tbl, _today = _live_build(sheet_id, kind)
+    latest, ts, watch, _tbl, fdaily, _today = _live_build(sheet_id, kind)
     if latest is None or latest.empty:
         return
-    st.markdown("##### 📋 אירועים — בחר שורה לפירוט תוך-יומי מלא")
+    st.markdown("##### 📋 אירועים — בחר שורה לפירוט יומי על-פני החלון")
     sdays = sorted(latest["scan_date"].dropna().unique())
     sel_day = st.multiselect("כניסה (scan_date)", sdays, default=sdays)
     view = latest[latest["scan_date"].isin(sel_day)]
@@ -1213,9 +1241,10 @@ def render_live_status(kind=None):
         return
     view = (view.assign(_abs=pd.to_numeric(view["pct_from_open"], errors="coerce").abs())
                 .sort_values("_abs", ascending=False).reset_index(drop=True))
-    disp = view.assign(**{"סוג": view["drop_kind"].map(_KIND_LABELS).fillna(view["drop_kind"])})[
-        ["ticker", "סוג", "scan_date", "dn", "reference", "price",
-         "pct_from_open", "pct_from_ref", "volume", "spark", "timestamp"]]
+    # "סוג" omitted (the page IS the kind); "עודכן (ET)" omitted (shown in the
+    # freshness caption above — no duplicate per-row timestamp).
+    disp = view[["ticker", "scan_date", "dn", "reference", "price",
+                 "pct_from_open", "pct_from_ref", "volume", "spark"]].copy()
 
     # Styler (%, 2dp, sign-colour) + LineChartColumn — kept ALONGSIDE on_select.
     sty = styled(disp)
@@ -1236,7 +1265,6 @@ def render_live_status(kind=None):
         "volume": st.column_config.Column("נפח"),
         "spark": st.column_config.LineChartColumn(
             "מסלול תוך-יומי", help="סדרת-המחיר התוך-יומית של האירוע"),
-        "timestamp": st.column_config.Column("עודכן (ET)"),
     }
     event = st.dataframe(sty, column_config=cfg, hide_index=True, width="stretch",
                          height=720, key=f"live_tbl_{kind}",
@@ -1247,9 +1275,9 @@ def render_live_status(kind=None):
         rows = []
     if rows:
         r = disp.iloc[rows[0]]
-        _live_event_detail(ts, watch, r["scan_date"], r["ticker"])
+        _live_event_detail(ts, watch, fdaily, r["scan_date"], r["ticker"])
     else:
-        st.caption("↑ בחר שורה בטבלה כדי לראות גרף תוך-יומי מלא + נתוני-האירוע.")
+        st.caption("↑ בחר שורה בטבלה כדי לראות גרף יומי על-פני החלון + נתוני-האירוע.")
 
 
 def render_system_health(sheet_id=None):
