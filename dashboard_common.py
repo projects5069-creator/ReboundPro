@@ -1075,9 +1075,18 @@ def _live_build(sheet_id, kind=None):
     latest = (ts.sort_values("timestamp")
                 .groupby(["scan_date", "ticker"], as_index=False).tail(1).copy())
     latest["dn"] = latest["scan_date"].map(dn_by_sd).astype("Int64")
-    spark = (ts.sort_values("timestamp").groupby(["scan_date", "ticker"])["price"]
-               .apply(list).rename("spark"))
-    latest = latest.merge(spark, on=["scan_date", "ticker"], how="left")
+    # in-row sparkline = the DAILY path (one cum%-from-ref point per trading day from
+    # forward_daily) — same story as the click-to-detail chart, NOT the intraday minutes.
+    # Empty list for D0 events with no forward data yet (a blank sparkline is fine).
+    if not fdaily.empty and {"day_offset", "cum_pct_from_ref"} <= set(fdaily.columns):
+        fds = fdaily.assign(_o=pd.to_numeric(fdaily["day_offset"], errors="coerce"),
+                            _c=pd.to_numeric(fdaily["cum_pct_from_ref"], errors="coerce"))
+        spark = (fds.dropna(subset=["_o"]).sort_values("_o")
+                    .groupby(["scan_date", "ticker"])["_c"].apply(list).rename("spark"))
+        latest = latest.merge(spark, on=["scan_date", "ticker"], how="left")
+    else:
+        latest["spark"] = pd.NA
+    latest["spark"] = latest["spark"].apply(lambda v: v if isinstance(v, list) else [])
 
     wkeep = [c for c in ("scan_date", "ticker", "open", "ref_close_window", "drop_kind")
              if c in watch.columns]
@@ -1140,14 +1149,20 @@ def _live_overview(sheet_id, kind):
     avg_day = tbl["pct_from_entry"].dropna().mean() if not tbl.empty else float("nan")
     # all 5 status buckets shown → 🟢 + 🔴🟠 + ⚪ + ⏳ sums to "סה\"כ במעקב" exactly
     dc = st.columns(6)
-    dc[0].metric("סה\"כ במעקב", len(tbl), border=True)
-    dc[1].metric("🟢 מתאוששות", int((tbl["status"] == "recovering").sum()), border=True)
+    dc[0].metric("סה\"כ במעקב", len(tbl), border=True,
+                 help="סך אירועי-המעקב מסוג זה (כל שורות ה-watchlist של ההשערה).")
+    dc[1].metric("🟢 מתאוששות", int((tbl["status"] == "recovering").sum()), border=True,
+                 help="מתאוששת: +3% ומעלה מהכניסה.")
     dc[2].metric("🔴🟠 עדיין-למטה",
-                 int(tbl["status"].isin(["down", "falling"]).sum()), border=True)
-    dc[3].metric("⚪ יציבה", int((tbl["status"] == "stable").sum()), border=True)
-    dc[4].metric("⏳ ממתין", int((tbl["status"] == "pending").sum()), border=True)
+                 int(tbl["status"].isin(["down", "falling"]).sum()), border=True,
+                 help="עדיין-למטה: בין −3% ל−10% מהכניסה (כולל 'נופלת' — מתחת −10%).")
+    dc[3].metric("⚪ יציבה", int((tbl["status"] == "stable").sum()), border=True,
+                 help="יציבה: בין −3% ל-+3% מהכניסה.")
+    dc[4].metric("⏳ ממתין", int((tbl["status"] == "pending").sum()), border=True,
+                 help="ממתין: עוד אין מספיק נתוני-קדימה לסיווג (יתמלא בריצת 22:30).")
     dc[5].metric("תנועה ממוצעת (יומי)",
-                 f"{avg_day:+.1f}%" if pd.notna(avg_day) else "—", border=True)
+                 f"{avg_day:+.1f}%" if pd.notna(avg_day) else "—", border=True,
+                 help="ממוצע % מהכניסה על-פני כל אירועי המעקב מסוג זה.")
 
     # smaller pies — direction + D-bucket (kind is fixed per page → no "by kind" pie)
     pie = latest.assign(
@@ -1245,28 +1260,38 @@ def render_live_status(kind=None):
     # freshness caption above — no duplicate per-row timestamp).
     disp = view[["ticker", "scan_date", "dn", "reference", "price",
                  "pct_from_open", "pct_from_ref", "volume", "spark"]].copy()
+    # Direction indicator that does NOT need a Styler (a Styler input silently breaks
+    # st.dataframe row selection): a native 🟢/🔴 text column by the day's sign.
+    pf_disp = pd.to_numeric(disp["pct_from_open"], errors="coerce")
+    disp.insert(disp.columns.get_loc("pct_from_open"), "dir",
+                pf_disp.map(lambda v: "🟢" if pd.notna(v) and v >= 0
+                            else ("🔴" if pd.notna(v) else "")))
 
-    # Styler (%, 2dp, sign-colour) + LineChartColumn — kept ALONGSIDE on_select.
-    sty = styled(disp)
-    for pcol in ("pct_from_open", "pct_from_ref"):
-        sty = sty.apply(lambda s: [f"color: {c}" for c in sign_colors(s)], subset=[pcol])
+    # PLAIN DataFrame (NOT a Styler) so on_select row-selection works — the exact
+    # canonical path render_overview uses (plain df + column_config + LineChartColumn).
+    # Formatting via column_config.NumberColumn (sign-prefixed %); colour-by-sign
+    # background is dropped (Styler-only) — direction stays via the 🟢/🔴 col + the
+    # +/- sign + the daily sparkline.
     cfg = {
-        "ticker": st.column_config.Column("טיקר"),
-        "scan_date": st.column_config.Column("כניסה"),
-        "dn": st.column_config.Column(
-            "D+n", help="ימי-מסחר מ-scan_date (לוח גלובלי; מדלג ימי-שבתון/חג)"),
-        "reference": st.column_config.Column(
-            "מחיר-ייחוס", help="נקודת-ההתחלה: intraday=open ביום-הצניחה · gradual=ref_close"),
-        "price": st.column_config.Column("מחיר נוכחי"),
-        "pct_from_open": st.column_config.Column(
-            "% שינוי יומי", help="תנועת המחיר היום מהפתיחה (תוך-יומי)"),
-        "pct_from_ref": st.column_config.Column(
-            "% מהייחוס", help="מאז נקודת-הצניחה: (מחיר נוכחי − מחיר-ייחוס) / מחיר-ייחוס"),
-        "volume": st.column_config.Column("נפח"),
+        "ticker": st.column_config.TextColumn("טיקר"),
+        "scan_date": st.column_config.TextColumn("כניסה"),
+        "dn": st.column_config.NumberColumn(
+            "D+n", format="%d", help="ימי-מסחר מ-scan_date (לוח גלובלי; מדלג ימי-שבתון/חג)"),
+        "reference": st.column_config.NumberColumn(
+            "מחיר-ייחוס", format="%.2f",
+            help="נקודת-ההתחלה: intraday=open ביום-הצניחה · gradual=ref_close"),
+        "price": st.column_config.NumberColumn("מחיר נוכחי", format="%.2f"),
+        "dir": st.column_config.TextColumn("כיוון", help="🟢 עולה / 🔴 יורד (לפי % שינוי יומי)"),
+        "pct_from_open": st.column_config.NumberColumn(
+            "% שינוי יומי", format="%+.2f%%", help="תנועת המחיר היום מהפתיחה (תוך-יומי)"),
+        "pct_from_ref": st.column_config.NumberColumn(
+            "% מהייחוס", format="%+.2f%%",
+            help="מאז נקודת-הצניחה: (מחיר נוכחי − מחיר-ייחוס) / מחיר-ייחוס"),
+        "volume": st.column_config.NumberColumn("נפח", format="%d"),
         "spark": st.column_config.LineChartColumn(
-            "מסלול תוך-יומי", help="סדרת-המחיר התוך-יומית של האירוע"),
+            "מסלול יומי", help="cum% מהייחוס לכל יום-מסחר (כמו גרף-הפירוט)"),
     }
-    event = st.dataframe(sty, column_config=cfg, hide_index=True, width="stretch",
+    event = st.dataframe(disp, column_config=cfg, hide_index=True, width="stretch",
                          height=720, key=f"live_tbl_{kind}",
                          on_select="rerun", selection_mode="single-row")
     try:
