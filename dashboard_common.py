@@ -1294,6 +1294,13 @@ def render_live_status(kind=None):
     event = st.dataframe(disp, column_config=cfg, hide_index=True, width="stretch",
                          height=720, key=f"live_tbl_{kind}",
                          on_select="rerun", selection_mode="single-row")
+    # TEMP DEBUG (להסרה אחרי אבחון) — מפצל C1/C2/C3 בקליק יחיד:
+    #   • "#" לא עולה בקליק   → C1: אין rerun מלא (הבחירה לא מגיעה ל-backend)
+    #   • "#" עולה אבל rows=[] → C2: בחירה מיותמת (אי-התאמת מזהה-widget)
+    #   • "#" עולה ו-rows=[i]  → הבחירה מגיעה; הבאג במורד-הזרם (כנראה layout/גובה-720)
+    st.session_state["_dbg_runs"] = st.session_state.get("_dbg_runs", 0) + 1
+    st.warning(f"DEBUG · full-render #{st.session_state['_dbg_runs']} · "
+               f"rows={list(getattr(event.selection, 'rows', []))} · key=live_tbl_{kind}")
     try:
         rows = list(event.selection.rows)
     except Exception:
