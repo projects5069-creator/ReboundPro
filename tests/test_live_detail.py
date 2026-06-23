@@ -10,6 +10,7 @@ it locks the panel's render so the polish can't silently regress.
 VIEW-ONLY (M5): the panel is descriptive — no score / signal / recommendation.
 """
 import pandas as pd
+import pytest
 from streamlit.testing.v1 import AppTest
 
 import dashboard_common as common
@@ -104,7 +105,7 @@ def test_mature_event_cards_are_descriptive_outcome():
     labels = _labels(at)
     # forward_daily outcome cards + live card + entry-fact cards all present
     for lbl in ("נקודת שיא מאז הכניסה", "נקודת שפל מאז הכניסה", "מגמה (3 ימים)",
-                "טווח בחלון", "ימים +/−", "מיקום נוכחי · חי",
+                "טווח בחלון", "ימי עלייה / ירידה", "מיקום נוכחי · חי",
                 "מחיר-כניסה", "נפח (כניסה)", "ימי-מסחר בחלון"):
         assert lbl in labels, f"missing card: {lbl} (have {list(labels)})"
     # retired/source-leak cards stay gone
@@ -114,7 +115,8 @@ def test_mature_event_cards_are_descriptive_outcome():
     assert labels["נקודת שיא מאז הכניסה"] == "+5.0%"
     assert labels["נקודת שפל מאז הכניסה"] == "-4.0%"
     assert labels["טווח בחלון"] == "9.0%"
-    assert labels["ימים +/−"] == "4 ↑ / 1 ↓"
+    # ↑/↓ from the per-day move (_chg signs: + − + − − → 2 up, 3 down), NOT cum
+    assert labels["ימי עלייה / ירידה"] == "2 ↑ / 3 ↓"
     assert labels["מגמה (3 ימים)"] == "▬ מעורבת"        # last 3 closes mixed
     # live group: position vs the historical extremes (THE clarity datum)
     assert labels["מיקום נוכחי · חי"] == "-20.6%"
@@ -137,6 +139,33 @@ def test_mature_event_chart_has_colored_daily_change_labels():
     assert common.GREEN in colors and common.RED in colors, colors  # both signs labelled
 
 
+def _parse_updown(value):
+    """'2 ↑ / 3 ↓' -> (2, 3)."""
+    up = int(value.split("↑")[0].strip())
+    down = int(value.split("/")[1].split("↓")[0].strip())
+    return up, down
+
+
+@pytest.mark.parametrize("fdaily", [_fdaily_mature(), _fdaily_all_negative()])
+def test_days_updown_card_matches_chart_green_red_labels(fdaily):
+    """THE real proof the fix works: the ↑/↓ on the 'ימי עלייה / ירידה' card must
+    equal EXACTLY the number of green/red daily-move labels on the chart. Same
+    threshold drives both (d >= 0 → green/↑, d < 0 → red/↓), so they can never
+    diverge — that's the whole point of counting _chg, not cum_pct_from_ref."""
+    captured = []
+    at = _render(fdaily, _watch(), captured)
+    assert not at.exception, [str(e.value) for e in at.exception]
+    assert captured, "plot() was never called — no chart built"
+    anns = captured[0].layout.annotations
+    n_green = sum(1 for a in anns if a.font.color == common.GREEN)
+    n_red = sum(1 for a in anns if a.font.color == common.RED)
+    up, down = _parse_updown(_labels(at)["ימי עלייה / ירידה"])
+    assert up == n_green, f"↑={up} but {n_green} green labels on chart"
+    assert down == n_red, f"↓={down} but {n_red} red labels on chart"
+    # and every labelled day is counted on one side or the other
+    assert up + down == len(anns), f"{up}+{down} != {len(anns)} chart labels"
+
+
 def test_all_negative_forward_peak_is_entry_zero():
     """A name that only ever fell → peak = entry = +0.0% (≥0), trough = the low.
 
@@ -150,7 +179,10 @@ def test_all_negative_forward_peak_is_entry_zero():
     assert labels["נקודת שיא מאז הכניסה"] == "+0.0%"   # the entry anchor, never negative
     assert labels["נקודת שפל מאז הכניסה"] == "-8.0%"
     assert labels["טווח בחלון"] == "8.0%"               # 0.0 - (-8.0)
-    assert labels["ימים +/−"] == "0 ↑ / 4 ↓"            # never closed above entry
+    # D+3 ROSE on its own day (_chg=+1.58) → 1 up, even though cum stayed < 0 the
+    # whole window. This is the bug the fix targets: count daily moves, not cum.
+    # _chg signs: − − + − → 1 up, 3 down.
+    assert labels["ימי עלייה / ירידה"] == "1 ↑ / 3 ↓"
 
 
 def test_live_position_vs_historical_extremes():
@@ -175,7 +207,7 @@ def test_immature_event_shows_info_and_no_crash():
     assert labels.get("נקודת שיא מאז הכניסה") == "—"
     assert labels.get("נקודת שפל מאז הכניסה") == "—"
     assert labels.get("טווח בחלון") == "—"
-    assert labels.get("ימים +/−") == "—"
+    assert labels.get("ימי עלייה / ירידה") == "—"
     assert "מצב נוכחי" not in labels
     assert labels.get("ימי-מסחר בחלון") == "0"
     # live price still shown, but no historical band to compare against yet

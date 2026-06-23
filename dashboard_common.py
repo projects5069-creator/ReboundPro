@@ -1246,10 +1246,14 @@ def _live_event_detail(ts, watch, fdaily, scan_date, ticker, live_pct=None):
             trend = (("▲", "עולה") if all(c > 0 for c in last3)
                      else ("▼", "יורד") if all(c < 0 for c in last3)
                      else ("▬", "מעורבת"))
-        # days closed above vs below the entry (forward days only, excl. the D+0 anchor)
-        fcum = pd.to_numeric(fd[ycol], errors="coerce").dropna()
-        if not fcum.empty:
-            days_up, days_down = int((fcum > 0).sum()), int((fcum < 0).sum())
+        # days that ROSE vs FELL on their own day — counted from the per-day move
+        # fd["_chg"] (daily_change_pct), NOT cum-from-entry, so the card matches the
+        # green/red daily-move labels on the chart exactly. Same threshold as the
+        # chart colour (line ~1229: d >= 0 → GREEN else RED): up = _chg >= 0,
+        # down = _chg < 0 → ↑ == #green labels, ↓ == #red labels, ↑+↓ == #labels.
+        fchg = fd["_chg"].dropna()
+        if not fchg.empty:
+            days_up, days_down = int((fchg >= 0).sum()), int((fchg < 0).sum())
 
     def _pct(v):
         return f"{v:+.1f}%" if v is not None and pd.notna(v) else "—"
@@ -1270,9 +1274,10 @@ def _live_event_detail(ts, watch, fdaily, scan_date, ticker, live_pct=None):
     c[0].metric("טווח בחלון", f"{rng:.1f}%" if rng is not None else "—", border=True,
                 help="מרחק בין הנקודה הגבוהה לנמוכה ביותר בחלון (שיא − שפל) — מדד-טווח "
                      "תיאורי. (מקור: forward_daily)")
-    c[1].metric("ימים +/−", f"{days_up} ↑ / {days_down} ↓" if days_up is not None else "—",
-                border=True, help="כמה ימי-מסחר נסגרו מעל הכניסה וכמה מתחת — תחושה אם המניה "
-                                  "בכלל ניסתה להתאושש. (מקור: forward_daily)")
+    c[1].metric("ימי עלייה / ירידה", f"{days_up} ↑ / {days_down} ↓" if days_up is not None else "—",
+                border=True, help="כמה ימים עלו וכמה ירדו לפי השינוי היומי — בדיוק התוויות "
+                                  "הצבעוניות בגרף (ירוק עלייה / אדום ירידה), לא מול מחיר-הכניסה. "
+                                  "(מקור: forward_daily)")
     st.caption("כל הנתונים בקבוצה זו מסגירות יומיות (`forward_daily`) עד היום האחרון שנרשם — "
                "עשויים לפגר אחרי המחיר החי שבטבלה עד ריצת-הסגירה (22:30).")
 
