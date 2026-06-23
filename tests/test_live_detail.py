@@ -60,12 +60,13 @@ def _watch():
                           "drop_kind": "intraday_drop", "open": 1.50, "volume": 1234567}])
 
 
-def _render(fdaily, watch, captured):
+def _render(fdaily, watch, captured, live_pct=None):
     """Render _live_event_detail inside an AppTest, capturing the plotly fig.
 
     plot() is monkeypatched on the dashboard_common module so the real px figure
     (with our annotations) is captured instead of drawn. Frames are stashed on the
     module because AppTest runs the script in-process and shares sys.modules.
+    `live_pct` is the live cum%-from-entry the caller would pass from _live_build.
     """
     orig_plot = common.plot
     common.plot = lambda target, fig: captured.append(fig)
@@ -75,7 +76,7 @@ def _render(fdaily, watch, captured):
         script = (
             "import dashboard_common as common\n"
             f"common._live_event_detail(None, common._test_watch, common._test_fd, "
-            f"{SCAN_DATE!r}, {TICKER!r})\n"
+            f"{SCAN_DATE!r}, {TICKER!r}, live_pct={live_pct!r})\n"
         )
         at = AppTest.from_string(script, default_timeout=30).run()
     finally:
@@ -89,25 +90,37 @@ def _labels(at):
     return {m.label: m.value for m in at.metric}
 
 
+def _texts(at):
+    """All markdown headers + captions joined — for source-tag / sentence assertions."""
+    return " | ".join([m.value for m in at.markdown] + [c.value for c in at.caption])
+
+
 def test_mature_event_cards_are_descriptive_outcome():
-    """Mature event → window-outcome + event-fact cards, correct values, no 'סוג'."""
+    """Mature event → forward_daily outcome group + live group + entry facts, all
+    source-tagged. live_pct=-20.6 sits below the historical trough (-4.0%)."""
     captured = []
-    at = _render(_fdaily_mature(), _watch(), captured)
+    at = _render(_fdaily_mature(), _watch(), captured, live_pct=-20.6)
     assert not at.exception, [str(e.value) for e in at.exception]
     labels = _labels(at)
-    # the descriptive outcome cards (peak/trough/trend) + three event-fact cards exist
-    for lbl in ("נקודת שיא מאז הכניסה", "נקודת שפל מאז הכניסה",
-                "מחיר-ייחוס", "נפח (כניסה)", "ימי-מסחר בחלון"):
+    # forward_daily outcome cards + live card + entry-fact cards all present
+    for lbl in ("נקודת שיא מאז הכניסה", "נקודת שפל מאז הכניסה", "מגמה (3 ימים)",
+                "טווח בחלון", "ימים +/−", "מיקום נוכחי · חי",
+                "מחיר-כניסה", "נפח (כניסה)", "ימי-מסחר בחלון"):
         assert lbl in labels, f"missing card: {lbl} (have {list(labels)})"
-    # single-source / clarity: live-pretender "מצב נוכחי", old "סוג", and the vague
-    # "מגמת 3 ימים" card are all gone
-    assert "מצב נוכחי" not in labels
-    assert "סוג" not in labels
-    assert "מגמת 3 ימים" not in labels
-    # values (descriptive, no signal): peak/trough from the cum path incl. the D+0 anchor
+    # retired/source-leak cards stay gone
+    for gone in ("מצב נוכחי", "סוג", "מגמת 3 ימים"):
+        assert gone not in labels
+    # forward_daily values (peak/trough incl. D+0 anchor; range = peak-trough; days +/-)
     assert labels["נקודת שיא מאז הכניסה"] == "+5.0%"
     assert labels["נקודת שפל מאז הכניסה"] == "-4.0%"
-    assert labels["ימי-מסחר בחלון"] == "5"
+    assert labels["טווח בחלון"] == "9.0%"
+    assert labels["ימים +/−"] == "4 ↑ / 1 ↓"
+    assert labels["מגמה (3 ימים)"] == "▬ מעורבת"        # last 3 closes mixed
+    # live group: position vs the historical extremes (THE clarity datum)
+    assert labels["מיקום נוכחי · חי"] == "-20.6%"
+    txt = _texts(at)
+    assert "forward_daily" in txt and "מצב חי" in txt    # both source tags are shown
+    assert "מתחת לשפל ההיסטורי" in txt                   # the explaining sentence
 
 
 def test_mature_event_chart_has_colored_daily_change_labels():
@@ -136,17 +149,36 @@ def test_all_negative_forward_peak_is_entry_zero():
     labels = _labels(at)
     assert labels["נקודת שיא מאז הכניסה"] == "+0.0%"   # the entry anchor, never negative
     assert labels["נקודת שפל מאז הכניסה"] == "-8.0%"
+    assert labels["טווח בחלון"] == "8.0%"               # 0.0 - (-8.0)
+    assert labels["ימים +/−"] == "0 ↑ / 4 ↓"            # never closed above entry
+
+
+def test_live_position_vs_historical_extremes():
+    """The live group describes where the live price sits vs the forward_daily band."""
+    # below the historical trough (the case that confused entry vs daily-closes)
+    at = _render(_fdaily_mature(), _watch(), [], live_pct=-20.6)
+    assert not at.exception, [str(e.value) for e in at.exception]
+    assert "מתחת לשפל ההיסטורי" in _texts(at)
+    # inside the band (between trough -4 and peak +5)
+    at = _render(_fdaily_mature(), _watch(), [], live_pct=1.0)
+    assert not at.exception, [str(e.value) for e in at.exception]
+    assert "בין השיא והשפל ההיסטוריים" in _texts(at)
 
 
 def test_immature_event_shows_info_and_no_crash():
     """No forward_daily yet → info message, dashes on outcome cards, no exception."""
     captured = []
-    at = _render(pd.DataFrame(), _watch(), captured)
+    at = _render(pd.DataFrame(), _watch(), captured, live_pct=-12.0)
     assert not at.exception, [str(e.value) for e in at.exception]
     assert at.info, "expected the 'forward window not matured' info message"
     labels = _labels(at)
     assert labels.get("נקודת שיא מאז הכניסה") == "—"
     assert labels.get("נקודת שפל מאז הכניסה") == "—"
+    assert labels.get("טווח בחלון") == "—"
+    assert labels.get("ימים +/−") == "—"
     assert "מצב נוכחי" not in labels
     assert labels.get("ימי-מסחר בחלון") == "0"
+    # live price still shown, but no historical band to compare against yet
+    assert labels.get("מיקום נוכחי · חי") == "-12.0%"
+    assert "אין עדיין קצוות היסטוריים" in _texts(at)
     assert not captured, "no chart should be built for an immature event"

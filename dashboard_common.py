@@ -1184,16 +1184,17 @@ def _dd_mm(d):
     return f"{d[8:10]}.{d[5:7]}" if len(d) >= 10 else d
 
 
-def _live_event_detail(ts, watch, fdaily, scan_date, ticker):
-    """Descriptive detail panel for one selected event: the DAILY path across the
-    forward window — one labelled point per trading day (D+n · DD.MM) from
-    forward_daily (cum_pct_from_ref), with the per-day move (daily_change_pct)
-    shown as a green/red label on each point — plus window outcome (peak/trough
-    since entry) and the watchlist event facts. VIEW-ONLY, no signal.
-    DAILY-CLOSES source (forward_daily) only — the live now-state lives in the table.
-    NOT the intraday minute path (that is the in-row sparkline)."""
+def _live_event_detail(ts, watch, fdaily, scan_date, ticker, live_pct=None):
+    """Descriptive detail panel for one selected event. TWO clearly-labelled sources:
+      • 📅 forward_daily (daily closes): the daily path chart + peak/trough/trend/
+        range/days-up-down — the window's outcome.
+      • 🟢 live (intraday): `live_pct` (= the table's % מהכניסה, computed ONCE in
+        _live_build and passed in — NOT recomputed here) — where the price is NOW,
+        positioned against the historical forward_daily extremes.
+    VIEW-ONLY (M5), no signal/recommendation. `live_pct` is the live cum% from entry."""
     st.markdown(f"#### 🔎 {ticker} · כניסה {scan_date}")
-    mfe = mae = None                      # window outcome (descriptive); filled when mature
+    mfe = mae = trend = None              # window outcome (descriptive); filled when mature
+    days_up = days_down = None
     fd = fdaily[(fdaily["scan_date"] == scan_date) & (fdaily["ticker"] == ticker)].copy() \
         if fdaily is not None and not fdaily.empty else fdaily
     if fd is None or fd.empty or "day_offset" not in fd.columns:
@@ -1238,22 +1239,65 @@ def _live_event_detail(ts, watch, fdaily, scan_date, ticker):
         path = plot_df[ycol].dropna()
         if not path.empty:
             mfe, mae = float(path.max()), float(path.min())
+        # trend of the last 3 daily closes (forward_daily day-over-day moves)
+        chgs = fd["_chg"].dropna().tolist()
+        if len(chgs) >= 3:
+            last3 = chgs[-3:]
+            trend = (("▲", "עולה") if all(c > 0 for c in last3)
+                     else ("▼", "יורד") if all(c < 0 for c in last3)
+                     else ("▬", "מעורבת"))
+        # days closed above vs below the entry (forward days only, excl. the D+0 anchor)
+        fcum = pd.to_numeric(fd[ycol], errors="coerce").dropna()
+        if not fcum.empty:
+            days_up, days_down = int((fcum > 0).sum()), int((fcum < 0).sum())
 
-    # ── window outcome — descriptive, from forward_daily ONLY (peak / trough since
-    # entry). NO "current" card here — the live now-state is the table's "% מהכניסה"
-    # (single source); forward_daily must not masquerade as the live now.
     def _pct(v):
         return f"{v:+.1f}%" if v is not None and pd.notna(v) else "—"
-    a = st.columns(2)
+
+    # ══ 📅 DAILY-CLOSES group — every datum here is forward_daily (descriptive) ════
+    st.markdown("##### 📅 סגירות יומיות · `forward_daily`")
+    a = st.columns(3)
     a[0].metric("נקודת שיא מאז הכניסה", _pct(mfe), border=True,
                 help="הבסיס = מחיר-הכניסה = 0%, שהוא הנקודה ההתחלתית — השיא לעולם לא נמוך "
-                     "מ-0%. הנקודה הכי גבוהה שהגיע cum% מאז הכניסה.")
+                     "מ-0%. הנקודה הכי גבוהה שהגיע cum% מאז הכניסה. (מקור: forward_daily)")
     a[1].metric("נקודת שפל מאז הכניסה", _pct(mae), border=True,
-                help="הבסיס = מחיר-הכניסה = 0%. הנקודה הכי נמוכה שהגיע cum% מאז הכניסה.")
-    st.caption("מבוסס על סגירות יומיות (forward_daily) עד היום האחרון שנרשם — עשוי לפגר "
-               "אחרי המחיר החי בטבלה עד ריצת-הסגירה.")
+                help="הנקודה הכי נמוכה שהגיע cum% מאז הכניסה. (מקור: forward_daily)")
+    a[2].metric("מגמה (3 ימים)", f"{trend[0]} {trend[1]}" if trend else "—", border=True,
+                help="כיוון 3 הסגירות היומיות האחרונות — ▲ עולה / ▼ יורד / ▬ מעורבת. "
+                     "תיאורי, לא המלצה. (מקור: forward_daily)")
+    rng = (mfe - mae) if (mfe is not None and mae is not None) else None
+    c = st.columns(2)
+    c[0].metric("טווח בחלון", f"{rng:.1f}%" if rng is not None else "—", border=True,
+                help="מרחק בין הנקודה הגבוהה לנמוכה ביותר בחלון (שיא − שפל) — מדד-טווח "
+                     "תיאורי. (מקור: forward_daily)")
+    c[1].metric("ימים +/−", f"{days_up} ↑ / {days_down} ↓" if days_up is not None else "—",
+                border=True, help="כמה ימי-מסחר נסגרו מעל הכניסה וכמה מתחת — תחושה אם המניה "
+                                  "בכלל ניסתה להתאושש. (מקור: forward_daily)")
+    st.caption("כל הנתונים בקבוצה זו מסגירות יומיות (`forward_daily`) עד היום האחרון שנרשם — "
+               "עשויים לפגר אחרי המחיר החי שבטבלה עד ריצת-הסגירה (22:30).")
 
-    # ── event facts ──────────────────────────────────────────────────────────────
+    # ══ 🟢 LIVE group — the now-price (intraday) positioned vs the forward_daily extremes ═
+    st.markdown("##### 🟢 מצב חי · `intraday`")
+    if live_pct is not None and pd.notna(live_pct):
+        live_pct = float(live_pct)
+        if mfe is not None and mae is not None:
+            pos = ("מתחת לשפל ההיסטורי" if live_pct < mae
+                   else "מעל השיא ההיסטורי" if live_pct > mfe
+                   else "בין השיא והשפל ההיסטוריים")
+            sentence = (f"החי {live_pct:+.1f}% — {pos} "
+                        f"(שפל {mae:+.1f}% · שיא {mfe:+.1f}%, מ-`forward_daily`).")
+        else:
+            sentence = f"החי {live_pct:+.1f}% — אין עדיין קצוות היסטוריים (החלון טרם הבשיל)."
+        st.metric("מיקום נוכחי · חי", _pct(live_pct), border=True,
+                  help="מיקום המחיר החי (intraday) מול מחיר-הכניסה. ההשוואה לשיא/שפל היא מול "
+                       "סגירות יומיות (forward_daily) — לכן ייתכן שהחי כבר מתחת לשפל ההיסטורי "
+                       "שטרם נרשם בסגירה.")
+        st.caption(sentence)
+    else:
+        st.caption("מיקום חי לא זמין לאירוע זה.")
+
+    # ══ 📌 entry facts (watchlist) ════════════════════════════════════════════════
+    st.markdown("##### 📌 עובדות הכניסה")
     w = watch[(watch["scan_date"] == scan_date) & (watch["ticker"] == ticker)]
     if not w.empty:
         r = w.iloc[0]
@@ -1262,7 +1306,7 @@ def _live_event_detail(ts, watch, fdaily, scan_date, ticker):
                                   else r.get("ref_close_window"), errors="coerce")
         vol = pd.to_numeric(r.get("volume"), errors="coerce")
         b = st.columns(3)
-        b[0].metric("מחיר-ייחוס", f"{reference:.2f}" if pd.notna(reference) else "—")
+        b[0].metric("מחיר-כניסה", f"{reference:.2f}" if pd.notna(reference) else "—")
         b[1].metric("נפח (כניסה)", f"{vol:,.0f}" if pd.notna(vol) else "—")
         b[2].metric("ימי-מסחר בחלון", n_days)
     st.caption("פירוט תיאורי בלבד — אין כאן אות/המלצה.")
@@ -1344,7 +1388,10 @@ def render_live_status(kind=None):
         rows = []
     if rows:
         r = disp.iloc[rows[0]]
-        _live_event_detail(ts, watch, fdaily, r["scan_date"], r["ticker"])
+        # live cum%-from-entry: reuse the value _live_build already computed (in `view`),
+        # do NOT recompute here — single source for the live "% מהכניסה".
+        live_pct = pd.to_numeric(view.iloc[rows[0]].get("pct_from_ref"), errors="coerce")
+        _live_event_detail(ts, watch, fdaily, r["scan_date"], r["ticker"], live_pct=live_pct)
     else:
         st.caption("↑ בחר שורה בטבלה כדי לראות גרף יומי על-פני החלון + נתוני-האירוע.")
 
