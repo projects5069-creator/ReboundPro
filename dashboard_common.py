@@ -1299,8 +1299,11 @@ def render_live_status(kind=None):
     #   • "#" עולה אבל rows=[] → C2: בחירה מיותמת (אי-התאמת מזהה-widget)
     #   • "#" עולה ו-rows=[i]  → הבחירה מגיעה; הבאג במורד-הזרם (כנראה layout/גובה-720)
     st.session_state["_dbg_runs"] = st.session_state.get("_dbg_runs", 0) + 1
-    st.warning(f"DEBUG · full-render #{st.session_state['_dbg_runs']} · "
-               f"rows={list(getattr(event.selection, 'rows', []))} · key=live_tbl_{kind}")
+    # n_disp=num_rows (פילטר הבחירה ב-Streamlit הוא 0<=row<num_rows); ss=session_state
+    # הגולמי. ss ריק => orphaning של מזהה-widget · ss מלא אבל event.rows=[] => stripping ל-num_rows.
+    st.warning(f"DEBUG · render #{st.session_state['_dbg_runs']} · n_disp={len(disp)} · "
+               f"event.rows={list(getattr(event.selection, 'rows', []))} · "
+               f"ss={repr(st.session_state.get(f'live_tbl_{kind}'))[:140]}")
     try:
         rows = list(event.selection.rows)
     except Exception:
