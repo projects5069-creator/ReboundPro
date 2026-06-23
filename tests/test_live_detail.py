@@ -111,9 +111,11 @@ def test_mature_event_cards_are_descriptive_outcome():
     # retired/source-leak cards stay gone
     for gone in ("מצב נוכחי", "סוג", "מגמת 3 ימים"):
         assert gone not in labels
-    # forward_daily values (peak/trough incl. D+0 anchor; range = peak-trough; days +/-)
+    # שיא/שפל מאז הכניסה now fold the live price in (live -20.6 is below every close,
+    # so it becomes the trough; the peak stays the +5.0 historical close).
     assert labels["נקודת שיא מאז הכניסה"] == "+5.0%"
-    assert labels["נקודת שפל מאז הכניסה"] == "-4.0%"
+    assert labels["נקודת שפל מאז הכניסה"] == "-20.6%"
+    # טווח בחלון stays the daily-closes span only (mfe-mae = 5-(-4) = 9.0), NOT incl live
     assert labels["טווח בחלון"] == "9.0%"
     # ↑/↓ from the per-day move (_chg signs: + − + − − → 2 up, 3 down), NOT cum
     assert labels["ימי עלייה / ירידה"] == "2 ↑ / 3 ↓"
@@ -123,6 +125,7 @@ def test_mature_event_cards_are_descriptive_outcome():
     txt = _texts(at)
     assert "forward_daily" in txt and "מצב חי" in txt    # both source tags are shown
     assert "מתחת לשפל ההיסטורי" in txt                   # the explaining sentence
+    assert "זהו גם השפל מאז הכניסה" in txt               # live is the overall low → coherent
 
 
 def test_mature_event_chart_has_colored_daily_change_labels():
@@ -197,6 +200,42 @@ def test_live_position_vs_historical_extremes():
     assert "בין השיא והשפל ההיסטוריים" in _texts(at)
 
 
+@pytest.mark.parametrize("live,exp_peak,exp_trough", [
+    (-30.0, "+5.0%", "-30.0%"),   # live below every close → trough == live, peak historical
+    (0.0,   "+5.0%", "-4.0%"),    # live mid-band → peak/trough stay the historical closes
+    (12.0,  "+12.0%", "-4.0%"),   # live above every close → peak == live, trough historical
+])
+def test_peak_trough_cards_fold_in_the_live_price(live, exp_peak, exp_trough):
+    """נקודת שיא/שפל מאז הכניסה fold the live price into the historical extremes
+    (hist peak +5.0 / trough -4.0 from _fdaily_mature): peak = max(hist, live),
+    trough = min(hist, live). This is the whole point — always current to the tick."""
+    at = _render(_fdaily_mature(), _watch(), [], live_pct=live)
+    assert not at.exception, [str(e.value) for e in at.exception]
+    labels = _labels(at)
+    assert labels["נקודת שיא מאז הכניסה"] == exp_peak
+    assert labels["נקודת שפל מאז הכניסה"] == exp_trough
+    # the daily-closes span is untouched by the live price (stays 5-(-4) = 9.0)
+    assert labels["טווח בחלון"] == "9.0%"
+
+
+def test_live_extreme_sentence_notes_it_is_the_overall_extreme():
+    """When the live price is itself the high/low since entry, the sentence says so —
+    keeping it coherent with the (now live-inclusive) שיא/שפל cards."""
+    # live below every close → it is the low since entry
+    at = _render(_fdaily_mature(), _watch(), [], live_pct=-30.0)
+    assert not at.exception, [str(e.value) for e in at.exception]
+    assert "זהו גם השפל מאז הכניסה" in _texts(at)
+    # live above every close → it is the high since entry
+    at = _render(_fdaily_mature(), _watch(), [], live_pct=12.0)
+    assert not at.exception, [str(e.value) for e in at.exception]
+    assert "זהו גם השיא מאז הכניסה" in _texts(at)
+    # live mid-band → neither extreme note appears
+    at = _render(_fdaily_mature(), _watch(), [], live_pct=1.0)
+    assert not at.exception, [str(e.value) for e in at.exception]
+    assert "זהו גם השפל מאז הכניסה" not in _texts(at)
+    assert "זהו גם השיא מאז הכניסה" not in _texts(at)
+
+
 def test_immature_event_shows_info_and_no_crash():
     """No forward_daily yet → info message, dashes on outcome cards, no exception."""
     captured = []
@@ -204,9 +243,11 @@ def test_immature_event_shows_info_and_no_crash():
     assert not at.exception, [str(e.value) for e in at.exception]
     assert at.info, "expected the 'forward window not matured' info message"
     labels = _labels(at)
-    assert labels.get("נקודת שיא מאז הכניסה") == "—"
-    assert labels.get("נקודת שפל מאז הכניסה") == "—"
-    assert labels.get("טווח בחלון") == "—"
+    # no closes yet, but the live price + the entry (0%) are still points since entry:
+    # peak = max(0, -12) = +0.0%, trough = min(0, -12) = -12.0% — always current.
+    assert labels.get("נקודת שיא מאז הכניסה") == "+0.0%"
+    assert labels.get("נקודת שפל מאז הכניסה") == "-12.0%"
+    assert labels.get("טווח בחלון") == "—"          # no daily-closes span yet
     assert labels.get("ימי עלייה / ירידה") == "—"
     assert "מצב נוכחי" not in labels
     assert labels.get("ימי-מסחר בחלון") == "0"

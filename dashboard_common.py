@@ -1260,46 +1260,57 @@ def _live_event_detail(ts, watch, fdaily, scan_date, ticker, live_pct=None):
 
     # ══ 📅 DAILY-CLOSES group — every datum here is forward_daily (descriptive) ════
     st.markdown("##### 📅 סגירות יומיות · `forward_daily`")
+    rng = (mfe - mae) if (mfe is not None and mae is not None) else None
     a = st.columns(3)
-    a[0].metric("נקודת שיא מאז הכניסה", _pct(mfe), border=True,
-                help="הבסיס = מחיר-הכניסה = 0%, שהוא הנקודה ההתחלתית — השיא לעולם לא נמוך "
-                     "מ-0%. הנקודה הכי גבוהה שהגיע cum% מאז הכניסה. (מקור: forward_daily)")
-    a[1].metric("נקודת שפל מאז הכניסה", _pct(mae), border=True,
-                help="הנקודה הכי נמוכה שהגיע cum% מאז הכניסה. (מקור: forward_daily)")
-    a[2].metric("מגמה (3 ימים)", f"{trend[0]} {trend[1]}" if trend else "—", border=True,
+    a[0].metric("מגמה (3 ימים)", f"{trend[0]} {trend[1]}" if trend else "—", border=True,
                 help="כיוון 3 הסגירות היומיות האחרונות — ▲ עולה / ▼ יורד / ▬ מעורבת. "
                      "תיאורי, לא המלצה. (מקור: forward_daily)")
-    rng = (mfe - mae) if (mfe is not None and mae is not None) else None
-    c = st.columns(2)
-    c[0].metric("טווח בחלון", f"{rng:.1f}%" if rng is not None else "—", border=True,
-                help="מרחק בין הנקודה הגבוהה לנמוכה ביותר בחלון (שיא − שפל) — מדד-טווח "
-                     "תיאורי. (מקור: forward_daily)")
-    c[1].metric("ימי עלייה / ירידה", f"{days_up} ↑ / {days_down} ↓" if days_up is not None else "—",
+    a[1].metric("טווח בחלון", f"{rng:.1f}%" if rng is not None else "—", border=True,
+                help="מרחק בין הגבוהה לנמוכה ביותר בסגירות היומיות (forward_daily) — "
+                     "לא כולל המחיר החי. (מקור: forward_daily)")
+    a[2].metric("ימי עלייה / ירידה", f"{days_up} ↑ / {days_down} ↓" if days_up is not None else "—",
                 border=True, help="כמה ימים עלו וכמה ירדו לפי השינוי היומי — בדיוק התוויות "
                                   "הצבעוניות בגרף (ירוק עלייה / אדום ירידה), לא מול מחיר-הכניסה. "
                                   "(מקור: forward_daily)")
     st.caption("כל הנתונים בקבוצה זו מסגירות יומיות (`forward_daily`) עד היום האחרון שנרשם — "
                "עשויים לפגר אחרי המחיר החי שבטבלה עד ריצת-הסגירה (22:30).")
 
-    # ══ 🟢 LIVE group — the now-price (intraday) positioned vs the forward_daily extremes ═
+    # ══ 🟢 LIVE group — high/low SINCE ENTRY (incl. the live price) + where now sits ════
     st.markdown("##### 🟢 מצב חי · `intraday`")
+    # peak/trough SINCE ENTRY fold the live price into the historical path extremes
+    # (single source: the live_pct passed in) so the cards are always current to the
+    # tick; historical-only when live is missing; the entry (0%) is always a point.
+    peak, trough = mfe, mae
     if live_pct is not None and pd.notna(live_pct):
         live_pct = float(live_pct)
+        peak = max(live_pct, 0.0) if peak is None else max(peak, live_pct)
+        trough = min(live_pct, 0.0) if trough is None else min(trough, live_pct)
+    _hlp = "מאז הכניסה — כולל המחיר החי, מתעדכן מיד."
+    a = st.columns(3)
+    a[0].metric("נקודת שיא מאז הכניסה", _pct(peak), border=True,
+                help="הגבוה ביותר שהמניה הגיעה אליו " + _hlp)
+    a[1].metric("נקודת שפל מאז הכניסה", _pct(trough), border=True,
+                help="הנמוך ביותר שהמניה הגיעה אליו " + _hlp)
+    if live_pct is not None and pd.notna(live_pct):
+        a[2].metric("מיקום נוכחי · חי", _pct(live_pct), border=True,
+                    help="מיקום המחיר החי (intraday) מול מחיר-הכניסה. השיא/שפל למעלה כבר "
+                         "מקפלים את החי — לכן כשהחי הוא הקצה, הוא יישב על השיא או השפל.")
         if mfe is not None and mae is not None:
             pos = ("מתחת לשפל ההיסטורי" if live_pct < mae
                    else "מעל השיא ההיסטורי" if live_pct > mfe
                    else "בין השיא והשפל ההיסטוריים")
+            # when the live price is itself the overall extreme since entry, say so —
+            # keeps the sentence coherent with the (now live-inclusive) שיא/שפל cards.
+            extreme = (" — זהו גם השפל מאז הכניסה" if live_pct <= trough
+                       else " — זהו גם השיא מאז הכניסה" if live_pct >= peak
+                       else "")
             sentence = (f"החי {live_pct:+.1f}% — {pos} "
-                        f"(שפל {mae:+.1f}% · שיא {mfe:+.1f}%, מ-`forward_daily`).")
+                        f"(שפל {mae:+.1f}% · שיא {mfe:+.1f}%, מ-`forward_daily`){extreme}.")
         else:
             sentence = f"החי {live_pct:+.1f}% — אין עדיין קצוות היסטוריים (החלון טרם הבשיל)."
-        st.metric("מיקום נוכחי · חי", _pct(live_pct), border=True,
-                  help="מיקום המחיר החי (intraday) מול מחיר-הכניסה. ההשוואה לשיא/שפל היא מול "
-                       "סגירות יומיות (forward_daily) — לכן ייתכן שהחי כבר מתחת לשפל ההיסטורי "
-                       "שטרם נרשם בסגירה.")
         st.caption(sentence)
     else:
-        st.caption("מיקום חי לא זמין לאירוע זה.")
+        st.caption("מיקום חי לא זמין לאירוע זה — שיא/שפל מחושבים מהסגירות היומיות בלבד.")
 
     # ══ 📌 entry facts (watchlist) ════════════════════════════════════════════════
     st.markdown("##### 📌 עובדות הכניסה")
