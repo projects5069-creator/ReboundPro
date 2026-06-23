@@ -1187,10 +1187,12 @@ def _dd_mm(d):
 def _live_event_detail(ts, watch, fdaily, scan_date, ticker):
     """Descriptive detail panel for one selected event: the DAILY path across the
     forward window — one labelled point per trading day (D+n · DD.MM) from
-    forward_daily (cum_pct_from_ref) — plus the watchlist event facts. VIEW-ONLY,
-    no signal/recommendation. NOT the intraday minute path (that is the in-row
-    sparkline); this shows day-over-day movement on the window."""
+    forward_daily (cum_pct_from_ref), with the per-day move (daily_change_pct)
+    shown as a green/red label on each point — plus window outcome (MFE/MAE/now/
+    3-day trend) and the watchlist event facts. VIEW-ONLY, no signal/recommendation.
+    NOT the intraday minute path (that is the in-row sparkline)."""
     st.markdown(f"#### 🔎 {ticker} · כניסה {scan_date}")
+    mfe = mae = cur = trend3 = None        # window outcome (descriptive); filled when mature
     fd = fdaily[(fdaily["scan_date"] == scan_date) & (fdaily["ticker"] == ticker)].copy() \
         if fdaily is not None and not fdaily.empty else fdaily
     if fd is None or fd.empty or "day_offset" not in fd.columns:
@@ -1202,18 +1204,57 @@ def _live_event_detail(ts, watch, fdaily, scan_date, ticker):
         fd = fd.dropna(subset=["_off"]).sort_values("_off")
         ycol = "cum_pct_from_ref" if "cum_pct_from_ref" in fd.columns else "close"
         fd[ycol] = pd.to_numeric(fd[ycol], errors="coerce")
+        # per-day move: prefer forward_daily.daily_change_pct, fall back to the diff of
+        # consecutive cum_pct_from_ref (first forward day = change from the reference).
+        chg = (pd.to_numeric(fd["daily_change_pct"], errors="coerce")
+               if "daily_change_pct" in fd.columns
+               else pd.Series(index=fd.index, dtype="float64"))
+        fd["_chg"] = chg.fillna(fd[ycol].diff().fillna(fd[ycol]))
         fd["יום"] = [f"D+{int(o)} ({_dd_mm(d)})"
                      for o, d in zip(fd["_off"], fd.get("date", ""))]
-        # anchor the path at D+0 = 0% (the reference itself) so daily movement reads
+        # anchor the path at D+0 = 0% (the reference itself); no daily-move label on it
         anchor = pd.DataFrame({"_off": [0.0], "יום": [f"D+0 ({_dd_mm(scan_date)})"],
-                               ycol: [0.0]})
-        plot_df = pd.concat([anchor, fd[["_off", "יום", ycol]]], ignore_index=True)
+                               ycol: [0.0], "_chg": [float("nan")]})
+        plot_df = pd.concat([anchor, fd[["_off", "יום", ycol, "_chg"]]], ignore_index=True)
         fig = px.line(plot_df, x="יום", y=ycol, markers=True,
-                      title=f"{ticker} — מסלול יומי על-פני החלון (cum% מהייחוס)")
+                      title=f"{ticker} — מסלול יומי על-פני החלון (cum% מהייחוס · תווית = שינוי יומי)")
         fig.update_traces(mode="lines+markers")
-        fig.update_layout(height=320, margin=dict(t=40, b=0, l=0, r=0))
+        # per-point daily-move label, green up / red down (descriptive colour cue only)
+        for _, pt in plot_df.iterrows():
+            d = pt["_chg"]
+            if pd.notna(d):
+                fig.add_annotation(x=pt["יום"], y=pt[ycol], text=f"{d:+.1f}%",
+                                   showarrow=False, yshift=14,
+                                   font=dict(size=12, color=GREEN if d >= 0 else RED))
+        fig.update_xaxes(tickfont=dict(size=14))
+        fig.update_layout(height=360, margin=dict(t=50, b=10, l=0, r=0))
         plot(st, fig)
         n_days = int(fd["_off"].max())
+        fcum = pd.to_numeric(fd[ycol], errors="coerce").dropna()    # forward days only
+        if not fcum.empty:
+            mfe, mae, cur = float(fcum.max()), float(fcum.min()), float(fcum.iloc[-1])
+        path = plot_df[ycol].dropna().reset_index(drop=True)        # incl. D+0 anchor
+        if len(path) >= 4:                  # current vs 3 trading days back
+            trend3 = float(path.iloc[-1] - path.iloc[-4])
+
+    # ── window outcome — descriptive (MFE / MAE / now / 3-day trend) ──────────────
+    def _pct(v):
+        return f"{v:+.1f}%" if v is not None and pd.notna(v) else "—"
+    a = st.columns(4)
+    a[0].metric("שיא בחלון", _pct(mfe), border=True,
+                help="הכי גבוה שהגיע cum% מהייחוס מאז הכניסה (MFE תיאורי).")
+    a[1].metric("שפל בחלון", _pct(mae), border=True,
+                help="הכי נמוך שהגיע cum% מהייחוס מאז הכניסה (MAE תיאורי).")
+    a[2].metric("מצב נוכחי", _pct(cur), border=True,
+                help="cum% מהייחוס ביום-המסחר האחרון בחלון.")
+    if trend3 is None:
+        a[3].metric("מגמת 3 ימים", "—", border=True, help="צריך ≥3 ימי-מסחר בחלון.")
+    else:
+        arrow = "▲" if trend3 > 0 else ("▼" if trend3 < 0 else "▬")
+        a[3].metric("מגמת 3 ימים", f"{arrow} {trend3:+.1f} נק'", delta_color="off",
+                    border=True, help="שינוי cum% מול 3 ימי-מסחר אחורה (תיאורי — סימן בלבד).")
+
+    # ── event facts ──────────────────────────────────────────────────────────────
     w = watch[(watch["scan_date"] == scan_date) & (watch["ticker"] == ticker)]
     if not w.empty:
         r = w.iloc[0]
@@ -1221,11 +1262,10 @@ def _live_event_detail(ts, watch, fdaily, scan_date, ticker):
         reference = pd.to_numeric(r.get("open") if kind != "gradual_drop"
                                   else r.get("ref_close_window"), errors="coerce")
         vol = pd.to_numeric(r.get("volume"), errors="coerce")
-        c = st.columns(4)
-        c[0].metric("סוג", "⚡ intraday" if kind != "gradual_drop" else "🐢 gradual")
-        c[1].metric("מחיר-ייחוס", f"{reference:.2f}" if pd.notna(reference) else "—")
-        c[2].metric("נפח (כניסה)", f"{vol:,.0f}" if pd.notna(vol) else "—")
-        c[3].metric("ימי-מסחר בחלון", n_days)
+        b = st.columns(3)
+        b[0].metric("מחיר-ייחוס", f"{reference:.2f}" if pd.notna(reference) else "—")
+        b[1].metric("נפח (כניסה)", f"{vol:,.0f}" if pd.notna(vol) else "—")
+        b[2].metric("ימי-מסחר בחלון", n_days)
     st.caption("פירוט תיאורי בלבד — אין כאן אות/המלצה.")
 
 
@@ -1294,16 +1334,6 @@ def render_live_status(kind=None):
     event = st.dataframe(disp, column_config=cfg, hide_index=True, width="stretch",
                          height=720, key=f"live_tbl_{kind}",
                          on_select="rerun", selection_mode="single-row")
-    # TEMP DEBUG (להסרה אחרי אבחון) — מפצל C1/C2/C3 בקליק יחיד:
-    #   • "#" לא עולה בקליק   → C1: אין rerun מלא (הבחירה לא מגיעה ל-backend)
-    #   • "#" עולה אבל rows=[] → C2: בחירה מיותמת (אי-התאמת מזהה-widget)
-    #   • "#" עולה ו-rows=[i]  → הבחירה מגיעה; הבאג במורד-הזרם (כנראה layout/גובה-720)
-    st.session_state["_dbg_runs"] = st.session_state.get("_dbg_runs", 0) + 1
-    # n_disp=num_rows (פילטר הבחירה ב-Streamlit הוא 0<=row<num_rows); ss=session_state
-    # הגולמי. ss ריק => orphaning של מזהה-widget · ss מלא אבל event.rows=[] => stripping ל-num_rows.
-    st.warning(f"DEBUG · render #{st.session_state['_dbg_runs']} · n_disp={len(disp)} · "
-               f"event.rows={list(getattr(event.selection, 'rows', []))} · "
-               f"ss={repr(st.session_state.get(f'live_tbl_{kind}'))[:140]}")
     try:
         rows = list(event.selection.rows)
     except Exception:
