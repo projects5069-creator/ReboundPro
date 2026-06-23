@@ -37,6 +37,24 @@ def _fdaily_mature():
     )
 
 
+def _fdaily_all_negative():
+    """A path that only ever falls: cum < 0 on every forward day → the peak must be
+    the D+0 entry (0%), NOT the least-negative day. Locks 'peak ≥ 0% since entry'.
+
+    cum path (incl. D+0 anchor 0): [0, -2, -5, -3.5, -8] → peak=+0.0  trough=-8.0
+    """
+    rows = [
+        (1, "2026-06-16", -2.0, -2.00),
+        (2, "2026-06-17", -5.0, -3.06),
+        (3, "2026-06-18", -3.5, 1.58),
+        (4, "2026-06-19", -8.0, -4.66),
+    ]
+    return pd.DataFrame(
+        [{"scan_date": SCAN_DATE, "ticker": TICKER, "day_offset": o, "date": d,
+          "cum_pct_from_ref": cum, "daily_change_pct": chg} for o, d, cum, chg in rows]
+    )
+
+
 def _watch():
     return pd.DataFrame([{"scan_date": SCAN_DATE, "ticker": TICKER,
                           "drop_kind": "intraday_drop", "open": 1.50, "volume": 1234567}])
@@ -78,16 +96,17 @@ def test_mature_event_cards_are_descriptive_outcome():
     assert not at.exception, [str(e.value) for e in at.exception]
     labels = _labels(at)
     # the descriptive outcome cards (peak/trough/trend) + three event-fact cards exist
-    for lbl in ("נקודת שיא מאז הכניסה", "נקודת שפל מאז הכניסה", "מגמת 3 ימים",
+    for lbl in ("נקודת שיא מאז הכניסה", "נקודת שפל מאז הכניסה",
                 "מחיר-ייחוס", "נפח (כניסה)", "ימי-מסחר בחלון"):
         assert lbl in labels, f"missing card: {lbl} (have {list(labels)})"
-    # single-source: the live-pretender "מצב נוכחי" and the old "סוג" card are gone
+    # single-source / clarity: live-pretender "מצב נוכחי", old "סוג", and the vague
+    # "מגמת 3 ימים" card are all gone
     assert "מצב נוכחי" not in labels
     assert "סוג" not in labels
-    # values (descriptive, no signal): peak/trough from the cum path, trend over 3 days
+    assert "מגמת 3 ימים" not in labels
+    # values (descriptive, no signal): peak/trough from the cum path incl. the D+0 anchor
     assert labels["נקודת שיא מאז הכניסה"] == "+5.0%"
     assert labels["נקודת שפל מאז הכניסה"] == "-4.0%"
-    assert "▼" in labels["מגמת 3 ימים"] and "-5.0" in labels["מגמת 3 ימים"]
     assert labels["ימי-מסחר בחלון"] == "5"
 
 
@@ -103,6 +122,20 @@ def test_mature_event_chart_has_colored_daily_change_labels():
     colors = {a.font.color for a in anns}
     assert all(t.endswith("%") for t in texts), texts
     assert common.GREEN in colors and common.RED in colors, colors  # both signs labelled
+
+
+def test_all_negative_forward_peak_is_entry_zero():
+    """A name that only ever fell → peak = entry = +0.0% (≥0), trough = the low.
+
+    This is the bug-fix lock: peak/trough are computed from the path INCLUDING the
+    D+0=0% anchor, so a never-recovered name cannot show a negative 'peak'.
+    """
+    captured = []
+    at = _render(_fdaily_all_negative(), _watch(), captured)
+    assert not at.exception, [str(e.value) for e in at.exception]
+    labels = _labels(at)
+    assert labels["נקודת שיא מאז הכניסה"] == "+0.0%"   # the entry anchor, never negative
+    assert labels["נקודת שפל מאז הכניסה"] == "-8.0%"
 
 
 def test_immature_event_shows_info_and_no_crash():

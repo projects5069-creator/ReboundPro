@@ -1189,11 +1189,11 @@ def _live_event_detail(ts, watch, fdaily, scan_date, ticker):
     forward window — one labelled point per trading day (D+n · DD.MM) from
     forward_daily (cum_pct_from_ref), with the per-day move (daily_change_pct)
     shown as a green/red label on each point — plus window outcome (peak/trough
-    since entry + 3-day trend) and the watchlist event facts. VIEW-ONLY, no signal.
+    since entry) and the watchlist event facts. VIEW-ONLY, no signal.
     DAILY-CLOSES source (forward_daily) only — the live now-state lives in the table.
     NOT the intraday minute path (that is the in-row sparkline)."""
     st.markdown(f"#### 🔎 {ticker} · כניסה {scan_date}")
-    mfe = mae = trend3 = None              # window outcome (descriptive); filled when mature
+    mfe = mae = None                      # window outcome (descriptive); filled when mature
     fd = fdaily[(fdaily["scan_date"] == scan_date) & (fdaily["ticker"] == ticker)].copy() \
         if fdaily is not None and not fdaily.empty else fdaily
     if fd is None or fd.empty or "day_offset" not in fd.columns:
@@ -1231,30 +1231,27 @@ def _live_event_detail(ts, watch, fdaily, scan_date, ticker):
         fig.update_layout(height=360, margin=dict(t=50, b=10, l=0, r=0))
         plot(st, fig)
         n_days = int(fd["_off"].max())
-        fcum = pd.to_numeric(fd[ycol], errors="coerce").dropna()    # forward days only
-        if not fcum.empty:
-            mfe, mae = float(fcum.max()), float(fcum.min())
-        path = plot_df[ycol].dropna().reset_index(drop=True)        # incl. D+0 anchor
-        if len(path) >= 4:                  # current vs 3 trading days back
-            trend3 = float(path.iloc[-1] - path.iloc[-4])
+        # peak/trough INCLUDE the D+0=0% anchor (the entry is itself a point on the
+        # path): a name that only ever fell still has peak ≥ 0% (the entry is the
+        # highest point), and one that only ever rose has trough ≤ 0% — never a
+        # sign-flipped surprise like a negative "peak".
+        path = plot_df[ycol].dropna()
+        if not path.empty:
+            mfe, mae = float(path.max()), float(path.min())
 
     # ── window outcome — descriptive, from forward_daily ONLY (peak / trough since
-    # entry + 3-day trend). NO "current" card here — the live now-state is the table's
-    # "% מהכניסה" (single source); forward_daily must not masquerade as the live now.
+    # entry). NO "current" card here — the live now-state is the table's "% מהכניסה"
+    # (single source); forward_daily must not masquerade as the live now.
     def _pct(v):
         return f"{v:+.1f}%" if v is not None and pd.notna(v) else "—"
-    a = st.columns(3)
+    a = st.columns(2)
     a[0].metric("נקודת שיא מאז הכניסה", _pct(mfe), border=True,
-                help="הבסיס = מחיר-הכניסה = 0%. הנקודה הכי גבוהה שהגיע cum% מאז הכניסה "
-                     "(יכול להיות שלילי אם מעולם לא חזר לחיוב — אז השיא הוא הכניסה עצמה).")
+                help="הבסיס = מחיר-הכניסה = 0%, שהוא הנקודה ההתחלתית — השיא לעולם לא נמוך "
+                     "מ-0%. הנקודה הכי גבוהה שהגיע cum% מאז הכניסה.")
     a[1].metric("נקודת שפל מאז הכניסה", _pct(mae), border=True,
                 help="הבסיס = מחיר-הכניסה = 0%. הנקודה הכי נמוכה שהגיע cum% מאז הכניסה.")
-    if trend3 is None:
-        a[2].metric("מגמת 3 ימים", "—", border=True, help="צריך ≥3 ימי-מסחר בחלון.")
-    else:
-        arrow = "▲" if trend3 > 0 else ("▼" if trend3 < 0 else "▬")
-        a[2].metric("מגמת 3 ימים", f"{arrow} {trend3:+.1f} נק'", delta_color="off",
-                    border=True, help="שינוי cum% מול 3 ימי-מסחר אחורה (תיאורי — סימן בלבד).")
+    st.caption("מבוסס על סגירות יומיות (forward_daily) עד היום האחרון שנרשם — עשוי לפגר "
+               "אחרי המחיר החי בטבלה עד ריצת-הסגירה.")
 
     # ── event facts ──────────────────────────────────────────────────────────────
     w = watch[(watch["scan_date"] == scan_date) & (watch["ticker"] == ticker)]
@@ -1336,7 +1333,7 @@ def render_live_status(kind=None):
             help="סך מצטבר חי מאז הכניסה: (מחיר חי − מחיר-כניסה) / מחיר-כניסה — "
                  "🟢 מעל הכניסה / 🔴 מתחת לכניסה"),
         "volume": st.column_config.NumberColumn(
-            "נפח", format="%d", help="נפח חי מ-intraday_timeseries"),
+            "נפח", format="%,d", help="נפח חי מ-intraday_timeseries"),
     }
     event = st.dataframe(disp, column_config=cfg, hide_index=True, width="stretch",
                          height=720, key=f"live_tbl_{kind}",
