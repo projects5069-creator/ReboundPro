@@ -1260,15 +1260,11 @@ def _live_event_detail(ts, watch, fdaily, scan_date, ticker, live_pct=None):
 
     # ══ 📅 DAILY-CLOSES group — every datum here is forward_daily (descriptive) ════
     st.markdown("##### 📅 סגירות יומיות · `forward_daily`")
-    rng = (mfe - mae) if (mfe is not None and mae is not None) else None
-    a = st.columns(3)
+    a = st.columns(2)
     a[0].metric("מגמה (3 ימים)", f"{trend[0]} {trend[1]}" if trend else "—", border=True,
                 help="כיוון 3 הסגירות היומיות האחרונות — ▲ עולה / ▼ יורד / ▬ מעורבת. "
                      "תיאורי, לא המלצה. (מקור: forward_daily)")
-    a[1].metric("טווח בחלון", f"{rng:.1f}%" if rng is not None else "—", border=True,
-                help="מרחק בין הגבוהה לנמוכה ביותר בסגירות היומיות (forward_daily) — "
-                     "לא כולל המחיר החי. (מקור: forward_daily)")
-    a[2].metric("ימי עלייה / ירידה", f"{days_up} ↑ / {days_down} ↓" if days_up is not None else "—",
+    a[1].metric("ימי עלייה / ירידה", f"{days_up} ↑ / {days_down} ↓" if days_up is not None else "—",
                 border=True, help="כמה ימים עלו וכמה ירדו לפי השינוי היומי — בדיוק התוויות "
                                   "הצבעוניות בגרף (ירוק עלייה / אדום ירידה), לא מול מחיר-הכניסה. "
                                   "(מקור: forward_daily)")

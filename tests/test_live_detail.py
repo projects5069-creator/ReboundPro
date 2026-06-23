@@ -105,18 +105,17 @@ def test_mature_event_cards_are_descriptive_outcome():
     labels = _labels(at)
     # forward_daily outcome cards + live card + entry-fact cards all present
     for lbl in ("נקודת שיא מאז הכניסה", "נקודת שפל מאז הכניסה", "מגמה (3 ימים)",
-                "טווח בחלון", "ימי עלייה / ירידה", "מיקום נוכחי · חי",
+                "ימי עלייה / ירידה", "מיקום נוכחי · חי",
                 "מחיר-כניסה", "נפח (כניסה)", "ימי-מסחר בחלון"):
         assert lbl in labels, f"missing card: {lbl} (have {list(labels)})"
-    # retired/source-leak cards stay gone
-    for gone in ("מצב נוכחי", "סוג", "מגמת 3 ימים"):
+    # retired/source-leak cards stay gone ("טווח בחלון" removed — redundant once
+    # peak/trough fold in the live price)
+    for gone in ("מצב נוכחי", "סוג", "מגמת 3 ימים", "טווח בחלון"):
         assert gone not in labels
     # שיא/שפל מאז הכניסה now fold the live price in (live -20.6 is below every close,
     # so it becomes the trough; the peak stays the +5.0 historical close).
     assert labels["נקודת שיא מאז הכניסה"] == "+5.0%"
     assert labels["נקודת שפל מאז הכניסה"] == "-20.6%"
-    # טווח בחלון stays the daily-closes span only (mfe-mae = 5-(-4) = 9.0), NOT incl live
-    assert labels["טווח בחלון"] == "9.0%"
     # ↑/↓ from the per-day move (_chg signs: + − + − − → 2 up, 3 down), NOT cum
     assert labels["ימי עלייה / ירידה"] == "2 ↑ / 3 ↓"
     assert labels["מגמה (3 ימים)"] == "▬ מעורבת"        # last 3 closes mixed
@@ -181,7 +180,6 @@ def test_all_negative_forward_peak_is_entry_zero():
     labels = _labels(at)
     assert labels["נקודת שיא מאז הכניסה"] == "+0.0%"   # the entry anchor, never negative
     assert labels["נקודת שפל מאז הכניסה"] == "-8.0%"
-    assert labels["טווח בחלון"] == "8.0%"               # 0.0 - (-8.0)
     # D+3 ROSE on its own day (_chg=+1.58) → 1 up, even though cum stayed < 0 the
     # whole window. This is the bug the fix targets: count daily moves, not cum.
     # _chg signs: − − + − → 1 up, 3 down.
@@ -214,8 +212,6 @@ def test_peak_trough_cards_fold_in_the_live_price(live, exp_peak, exp_trough):
     labels = _labels(at)
     assert labels["נקודת שיא מאז הכניסה"] == exp_peak
     assert labels["נקודת שפל מאז הכניסה"] == exp_trough
-    # the daily-closes span is untouched by the live price (stays 5-(-4) = 9.0)
-    assert labels["טווח בחלון"] == "9.0%"
 
 
 def test_live_extreme_sentence_notes_it_is_the_overall_extreme():
@@ -247,7 +243,7 @@ def test_immature_event_shows_info_and_no_crash():
     # peak = max(0, -12) = +0.0%, trough = min(0, -12) = -12.0% — always current.
     assert labels.get("נקודת שיא מאז הכניסה") == "+0.0%"
     assert labels.get("נקודת שפל מאז הכניסה") == "-12.0%"
-    assert labels.get("טווח בחלון") == "—"          # no daily-closes span yet
+    assert "טווח בחלון" not in labels               # range card removed (redundant)
     assert labels.get("ימי עלייה / ירידה") == "—"
     assert "מצב נוכחי" not in labels
     assert labels.get("ימי-מסחר בחלון") == "0"
