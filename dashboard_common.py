@@ -1031,29 +1031,18 @@ def render_health_banner(sheet_id=None):
         st.info(base)
 
 
-@st.fragment(run_every="300s")
-def render_live_status(sheet_id=None):
-    """Descriptive intraday "live status" view: two clearly-separated overview
-    layers — (1) INTRADAY KPIs that breathe this session and (2) a DAILY
-    classification layer that updates at 22:30 — descriptive pies (kind / direction
-    / D-bucket), and a per-event table: latest intraday point per (scan_date,
-    ticker) from intraday_timeseries with reference price, % from open, % from
-    reference, an in-row price sparkline and D+n.
+_LIVE_TITLES = {"intraday_drop": "📡 מצב חי — ⚡ Intraday",
+                "gradual_drop": "📡 מצב חי — 🐢 Gradual"}
+_KIND_LABELS = {"intraday_drop": "⚡ intraday", "gradual_drop": "🐢 gradual"}
 
-    D+n is derived from the GLOBAL trading calendar (union of all dates seen in
-    intraday_timeseries + forward_daily), so every event sharing a scan_date gets
-    the SAME D+n regardless of its own gappy sampling.
 
-    VIEW-ONLY — NO score / signal / ranking / entry decision (M5 boundary).
-    Wrapped in st.fragment(run_every="300s"), matching CACHE_TTL=300: only this
-    view re-runs every 5 min, so nothing else resets. intraday_timeseries grows
-    only during market hours, so it "breathes" only when the market is open."""
-    if sheet_id is None:
-        sheet_id = resolve_sheet_id()
-    if not sheet_id:
-        return
-    page_header("📡 מצב חי — תוך-יומי",
-                VIEW_ONLY + " · תוך-יומי · נושם בשעות-מסחר בלבד · ≠ סיווג הריבאונד היומי")
+def _live_build(sheet_id, kind=None):
+    """Shared compute for the live-status pages: latest intraday point per event
+    (+ D+n via the GLOBAL trading calendar, reference price, % from reference, and
+    an in-row price sparkline), optionally filtered to ONE drop_kind. Returns
+    (latest, ts, watch, tbl, today); latest/ts are None on no-data / quota. Pure
+    read — the underlying loads are st.cache_data(ttl=300), so calling this from
+    both the fragment and the table section costs one Sheet read, not two."""
     try:
         ts = load(sheet_id, config.TAB_TIMESERIES, ["price", "pct_from_open", "volume"])
         data = load_many(sheet_id, {config.TAB_WATCHLIST: NUM_WATCH,
@@ -1061,23 +1050,21 @@ def render_live_status(sheet_id=None):
                                     config.TAB_FORWARD_DAILY: NUM_FDAILY})
     except gspread.exceptions.APIError as e:
         st.info(QUOTA_MSG if _is_quota(e) else f"מצב-חי לא נקרא מה-Sheet: {e}")
-        return
+        return None, None, None, None, None
     if ts.empty or "timestamp" not in ts.columns:
         st.info("intraday_timeseries עדיין ריק — יתמלא בריצת הסורק התוך-יומי הבאה (שעות-מסחר).")
-        return
-
+        return None, None, None, None, None
     ts = ts[ts["timestamp"].astype(str).str.len() >= 16].copy()
     if ts.empty:
         st.info("אין עדיין נקודות תוך-יומיות תקינות.")
-        return
+        return None, None, None, None, None
     ts["_date"] = ts["timestamp"].astype(str).str[:10]
     watch = coalesce_kind(data[config.TAB_WATCHLIST])
     fdaily = data[config.TAB_FORWARD_DAILY]
 
     # D+n from the GLOBAL trading calendar = union of all dates seen in
-    # intraday_timeseries + forward_daily. Every event sharing a scan_date gets the
-    # SAME D+n regardless of its own gappy sampling; the union naturally skips
-    # non-trading days (weekends, Juneteenth) since no data lands on them.
+    # intraday_timeseries + forward_daily, so every event sharing a scan_date gets
+    # the SAME D+n; the union naturally skips non-trading days (weekends, Juneteenth).
     fd_dates = (set(fdaily["date"].astype(str).str[:10]) if "date" in fdaily.columns
                 else set())
     cal = sorted((set(ts["_date"]) | fd_dates) - {""})
@@ -1085,17 +1072,13 @@ def render_live_status(sheet_id=None):
     dn_by_sd = {sd: sum(1 for c in cal if sd < c <= gmax)
                 for sd in ts["scan_date"].dropna().unique()}
 
-    # latest intraday point per (scan_date, ticker) — string ts sorts chronologically
     latest = (ts.sort_values("timestamp")
                 .groupby(["scan_date", "ticker"], as_index=False).tail(1).copy())
     latest["dn"] = latest["scan_date"].map(dn_by_sd).astype("Int64")
-    # intraday price series per event (ordered) — for the in-row sparkline
     spark = (ts.sort_values("timestamp").groupby(["scan_date", "ticker"])["price"]
                .apply(list).rename("spark"))
     latest = latest.merge(spark, on=["scan_date", "ticker"], how="left")
 
-    # reference price + drop_kind from the watchlist event (NOT recomputed):
-    # intraday reference = open (drop-day open); gradual reference = ref_close_window.
     wkeep = [c for c in ("scan_date", "ticker", "open", "ref_close_window", "drop_kind")
              if c in watch.columns]
     wsub = (watch[wkeep].drop_duplicates(["scan_date", "ticker"]) if not watch.empty
@@ -1110,32 +1093,51 @@ def render_live_status(sheet_id=None):
     latest["pct_from_ref"] = ((latest["price"] - latest["reference"])
                               / latest["reference"].where(latest["reference"] > 0)
                               * 100).round(2)
-    pf = pd.to_numeric(latest["pct_from_open"], errors="coerce")
 
+    tbl = build_overview_table(watch, data[config.TAB_POST], fdaily)
+    if kind:                                   # per-page: ONE drop_kind only, no averaging across kinds
+        latest = latest[latest["drop_kind"] == kind].copy()
+        tbl = tbl[tbl["drop_kind"] == kind].copy()
     today = pd.Timestamp.now(tz="America/Lima").strftime("%Y-%m-%d")
+    return latest, ts, watch, tbl, today
+
+
+@st.fragment(run_every="300s")
+def _live_overview(sheet_id, kind):
+    """Breathing overview — freshness + intraday KPIs + daily-classification KPIs +
+    two small pies. Auto-refreshes every 300s. Kept SEPARATE from the selectable
+    table so a row selection is never reset by the timer. VIEW-ONLY (M5)."""
+    latest, ts, watch, tbl, today = _live_build(sheet_id, kind)
+    if latest is None:
+        return
+    if latest.empty:
+        st.info("אין עדיין אירועים מסוג זה במעקב.")
+        return
+    pf = pd.to_numeric(latest["pct_from_open"], errors="coerce")
+    is_today = latest["_date"] == today
     newest = latest["timestamp"].astype(str).max()
     if newest[:10] < today:
         st.caption(f"🕒 השוק סגור — מוצג המצב האחרון מ-{newest} (ET). יתעדכן עם פתיחת-המסחר.")
     else:
         st.caption(f"🟢 חי · עדכון אחרון {newest} (ET) · {len(latest)} מניות במעקב")
 
-    # ── overview layer 1: INTRADAY KPIs (breathing — THIS session's move) ────────
+    # layer 1 — intraday KPIs: today's count + cumulative-total beside it (delta)
     st.markdown("##### 📈 תוך-יומי · נושם בשעות-מסחר")
     mover = latest.loc[pf.abs().idxmax()] if pf.notna().any() else None
     ic = st.columns(4)
-    ic[0].metric("עולות היום 🟢", int((pf > 0).sum()), border=True)
-    ic[1].metric("יורדות היום 🔴", int((pf < 0).sum()), border=True)
+    ic[0].metric("עולות היום 🟢", int((is_today & (pf > 0)).sum()),
+                 delta=f"{int((pf > 0).sum())} מצטבר", delta_color="off", border=True)
+    ic[1].metric("יורדות היום 🔴", int((is_today & (pf < 0)).sum()),
+                 delta=f"{int((pf < 0).sum())} מצטבר", delta_color="off", border=True)
     ic[2].metric("תנועה יומית ממוצעת",
-                 f"{pf.mean():+.2f}%" if pf.notna().any() else "—", border=True)
+                 f"{pf[is_today].mean():+.2f}%" if is_today.any() else "—", border=True)
     ic[3].metric("המזיזה ביותר",
                  f"{mover['ticker']} {float(mover['pct_from_open']):+.1f}%"
                  if mover is not None else "—", border=True)
 
-    # ── overview layer 2: DAILY classification (updates 22:30) — reuse
-    # build_overview_table so the recovering/down/falling buckets are defined once.
+    # layer 2 — daily classification (reuse build_overview_table buckets)
     st.markdown("##### 🗓️ סיווג יומי · מתעדכן 22:30 (סיווג ריבאונד — לא נתון תוך-יומי)")
-    tbl = build_overview_table(watch, data[config.TAB_POST], fdaily)
-    avg_day = tbl["pct_from_entry"].dropna().mean()
+    avg_day = tbl["pct_from_entry"].dropna().mean() if not tbl.empty else float("nan")
     dc = st.columns(4)
     dc[0].metric("סה\"כ במעקב", len(tbl), border=True)
     dc[1].metric("🟢 מתאוששות", int((tbl["status"] == "recovering").sum()), border=True)
@@ -1144,46 +1146,81 @@ def render_live_status(sheet_id=None):
     dc[3].metric("תנועה ממוצעת (יומי)",
                  f"{avg_day:+.1f}%" if pd.notna(avg_day) else "—", border=True)
 
-    # ── descriptive pies (Plotly) — split / direction / D-bucket ─────────────────
-    KIND_LABELS = {"intraday_drop": "⚡ intraday", "gradual_drop": "🐢 gradual"}
+    # smaller pies — direction + D-bucket (kind is fixed per page → no "by kind" pie)
     pie = latest.assign(
-        סוג=latest["drop_kind"].map(KIND_LABELS).fillna(latest["drop_kind"]),
         כיוון=pf.map(lambda v: "עולה 🟢" if pd.notna(v) and v >= 0 else "יורד 🔴"),
         Dbucket=latest["dn"].map(lambda d: "D0" if pd.notna(d) and d == 0
                                  else ("D1-3" if pd.notna(d) and d <= 3 else "D4+")),
     )
-    pc = st.columns(3)
-    plot(pc[0], px.pie(pie, names="סוג", title="לפי סוג", hole=0.4))
-    plot(pc[1], px.pie(pie, names="כיוון", title="לפי כיוון-היום", hole=0.4))
-    plot(pc[2], px.pie(pie, names="Dbucket", title="לפי D-bucket", hole=0.4))
+    pc = st.columns(2)
+    for col, names, title in ((pc[0], "כיוון", "לפי כיוון-היום"),
+                              (pc[1], "Dbucket", "לפי D-bucket")):
+        fig = px.pie(pie, names=names, title=title, hole=0.4)
+        fig.update_layout(height=240, margin=dict(t=40, b=0, l=0, r=0))
+        plot(col, fig)
 
-    # ── per-event table — filters + click-sort + in-row price sparkline ──────────
-    fc = st.columns(2)
-    kinds = sorted(latest["drop_kind"].dropna().unique())
-    sel_kind = fc[0].multiselect("סוג", kinds, default=kinds,
-                                 format_func=lambda k: KIND_LABELS.get(k, k))
+
+def _live_event_detail(ts, watch, scan_date, ticker):
+    """Descriptive detail panel for one selected event: the FULL intraday price
+    path from intraday_timeseries + the watchlist event facts. VIEW-ONLY."""
+    ev = ts[(ts["scan_date"] == scan_date) & (ts["ticker"] == ticker)].sort_values("timestamp")
+    st.markdown(f"#### 🔎 {ticker} · כניסה {scan_date}")
+    if ev.empty:
+        st.info("אין סדרה תוך-יומית לאירוע זה.")
+        return
+    fig = px.line(ev, x="timestamp", y="price", title=f"{ticker} — מסלול תוך-יומי מלא")
+    fig.update_layout(height=320, margin=dict(t=40, b=0, l=0, r=0))
+    plot(st, fig)
+    w = watch[(watch["scan_date"] == scan_date) & (watch["ticker"] == ticker)]
+    if not w.empty:
+        r = w.iloc[0]
+        kind = (r.get("drop_kind") or "intraday_drop")
+        reference = pd.to_numeric(r.get("open") if kind != "gradual_drop"
+                                  else r.get("ref_close_window"), errors="coerce")
+        vol = pd.to_numeric(r.get("volume"), errors="coerce")
+        c = st.columns(4)
+        c[0].metric("סוג", "⚡ intraday" if kind != "gradual_drop" else "🐢 gradual")
+        c[1].metric("מחיר-ייחוס", f"{reference:.2f}" if pd.notna(reference) else "—")
+        c[2].metric("נפח (כניסה)", f"{vol:,.0f}" if pd.notna(vol) else "—")
+        c[3].metric("נקודות תוך-יומיות", len(ev))
+    st.caption("פירוט תיאורי בלבד — אין כאן אות/המלצה.")
+
+
+def render_live_status(kind=None):
+    """Per-kind live-status page (kind ∈ intraday_drop / gradual_drop). The breathing
+    overview (KPIs + pies) auto-refreshes every 300s inside _live_overview; the
+    selectable table + detail panel live OUTSIDE the fragment, so a row selection
+    survives the timer. VIEW-ONLY — no score / signal / ranking / entry (M5)."""
+    sheet_id = resolve_sheet_id()
+    if not sheet_id:
+        st.error("REBOUND_SHEET_ID לא מוגדר (.env / env / st.secrets).")
+        return
+    page_header(_LIVE_TITLES.get(kind, "📡 מצב חי"),
+                VIEW_ONLY + " · תוך-יומי · נושם בשעות-מסחר בלבד · ≠ סיווג הריבאונד היומי")
+
+    _live_overview(sheet_id, kind)             # breathing part (auto-refresh 300s)
+
+    # ── selectable table + detail — OUTSIDE the fragment (selection is stable) ────
+    latest, ts, watch, _tbl, _today = _live_build(sheet_id, kind)
+    if latest is None or latest.empty:
+        return
+    st.markdown("##### 📋 אירועים — בחר שורה לפירוט תוך-יומי מלא")
     sdays = sorted(latest["scan_date"].dropna().unique())
-    sel_day = fc[1].multiselect("כניסה (scan_date)", sdays, default=sdays)
-    view = latest[latest["drop_kind"].isin(sel_kind) & latest["scan_date"].isin(sel_day)]
+    sel_day = st.multiselect("כניסה (scan_date)", sdays, default=sdays)
+    view = latest[latest["scan_date"].isin(sel_day)]
     if view.empty:
         st.info("אין שורות לבחירה הנוכחית.")
         return
-
-    # initial order: |daily move| descending (descriptive ordering only; the table
-    # itself is click-sortable by any column header).
-    view = view.assign(_abs=pd.to_numeric(view["pct_from_open"], errors="coerce").abs()
-                       ).sort_values("_abs", ascending=False)
-    disp = view.assign(**{"סוג": view["drop_kind"].map(KIND_LABELS).fillna(view["drop_kind"])})[
+    view = (view.assign(_abs=pd.to_numeric(view["pct_from_open"], errors="coerce").abs())
+                .sort_values("_abs", ascending=False).reset_index(drop=True))
+    disp = view.assign(**{"סוג": view["drop_kind"].map(_KIND_LABELS).fillna(view["drop_kind"])})[
         ["ticker", "סוג", "scan_date", "dn", "reference", "price",
          "pct_from_open", "pct_from_ref", "volume", "spark", "timestamp"]]
 
-    # reuse styled() (%, 2dp, thousands) + sign_colors() for per-sign colour on the
-    # two pct columns — no duplicated formatting/colour logic. (spark is an object
-    # column → styled() skips it; LineChartColumn renders it.)
+    # Styler (%, 2dp, sign-colour) + LineChartColumn — kept ALONGSIDE on_select.
     sty = styled(disp)
     for pcol in ("pct_from_open", "pct_from_ref"):
         sty = sty.apply(lambda s: [f"color: {c}" for c in sign_colors(s)], subset=[pcol])
-
     cfg = {
         "ticker": st.column_config.Column("טיקר"),
         "scan_date": st.column_config.Column("כניסה"),
@@ -1201,7 +1238,18 @@ def render_live_status(sheet_id=None):
             "מסלול תוך-יומי", help="סדרת-המחיר התוך-יומית של האירוע"),
         "timestamp": st.column_config.Column("עודכן (ET)"),
     }
-    st.dataframe(sty, column_config=cfg, hide_index=True, width="stretch")
+    event = st.dataframe(sty, column_config=cfg, hide_index=True, width="stretch",
+                         height=720, key=f"live_tbl_{kind}",
+                         on_select="rerun", selection_mode="single-row")
+    try:
+        rows = list(event.selection.rows)
+    except Exception:
+        rows = []
+    if rows:
+        r = disp.iloc[rows[0]]
+        _live_event_detail(ts, watch, r["scan_date"], r["ticker"])
+    else:
+        st.caption("↑ בחר שורה בטבלה כדי לראות גרף תוך-יומי מלא + נתוני-האירוע.")
 
 
 def render_system_health(sheet_id=None):
