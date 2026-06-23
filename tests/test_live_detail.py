@@ -1,8 +1,8 @@
 """Regression tests for the live-status detail panel (_live_event_detail).
 
 These verify the BUILDING of the panel — the daily-path chart with green/red
-per-day-move annotations, and the descriptive outcome cards (MFE / MAE / now /
-3-day trend) + event facts. They do NOT exercise the dataframe row-click itself:
+per-day-move annotations, and the descriptive outcome cards (peak / trough since
+entry + 3-day trend) + event facts. They do NOT exercise the dataframe row-click itself:
 that is proven working in-browser, and AppTest cannot simulate a dataframe
 selection (no .select() on the Dataframe element). This is the right coverage —
 it locks the panel's render so the polish can't silently regress.
@@ -21,7 +21,7 @@ def _fdaily_mature():
     """Matured forward_daily: D+1..D+5, cum_pct_from_ref + daily_change_pct, mixed signs.
 
     cum path (incl. D+0 anchor 0): [0, 3, 1, 5, 2, -4]
-      → MFE=+5.0  MAE=-4.0  now=-4.0  trend3 = cum(D+5) - cum(D+2) = -4 - 1 = -5.0
+      → peak=+5.0  trough=-4.0  trend3 = cum(D+5) - cum(D+2) = -4 - 1 = -5.0
     daily_change_pct signs: + - + - -  → both green and red labels appear.
     """
     rows = [
@@ -77,16 +77,16 @@ def test_mature_event_cards_are_descriptive_outcome():
     at = _render(_fdaily_mature(), _watch(), captured)
     assert not at.exception, [str(e.value) for e in at.exception]
     labels = _labels(at)
-    # the four descriptive outcome cards + three event-fact cards exist
-    for lbl in ("שיא בחלון", "שפל בחלון", "מצב נוכחי", "מגמת 3 ימים",
+    # the descriptive outcome cards (peak/trough/trend) + three event-fact cards exist
+    for lbl in ("נקודת שיא מאז הכניסה", "נקודת שפל מאז הכניסה", "מגמת 3 ימים",
                 "מחיר-ייחוס", "נפח (כניסה)", "ימי-מסחר בחלון"):
         assert lbl in labels, f"missing card: {lbl} (have {list(labels)})"
-    # the removed card must be gone
+    # single-source: the live-pretender "מצב נוכחי" and the old "סוג" card are gone
+    assert "מצב נוכחי" not in labels
     assert "סוג" not in labels
-    # values (descriptive, no signal): MFE/MAE/now from the cum path, trend over 3 days
-    assert labels["שיא בחלון"] == "+5.0%"
-    assert labels["שפל בחלון"] == "-4.0%"
-    assert labels["מצב נוכחי"] == "-4.0%"
+    # values (descriptive, no signal): peak/trough from the cum path, trend over 3 days
+    assert labels["נקודת שיא מאז הכניסה"] == "+5.0%"
+    assert labels["נקודת שפל מאז הכניסה"] == "-4.0%"
     assert "▼" in labels["מגמת 3 ימים"] and "-5.0" in labels["מגמת 3 ימים"]
     assert labels["ימי-מסחר בחלון"] == "5"
 
@@ -112,7 +112,8 @@ def test_immature_event_shows_info_and_no_crash():
     assert not at.exception, [str(e.value) for e in at.exception]
     assert at.info, "expected the 'forward window not matured' info message"
     labels = _labels(at)
-    assert labels.get("שיא בחלון") == "—"
-    assert labels.get("מצב נוכחי") == "—"
+    assert labels.get("נקודת שיא מאז הכניסה") == "—"
+    assert labels.get("נקודת שפל מאז הכניסה") == "—"
+    assert "מצב נוכחי" not in labels
     assert labels.get("ימי-מסחר בחלון") == "0"
     assert not captured, "no chart should be built for an immature event"

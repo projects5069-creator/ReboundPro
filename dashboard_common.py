@@ -1188,11 +1188,12 @@ def _live_event_detail(ts, watch, fdaily, scan_date, ticker):
     """Descriptive detail panel for one selected event: the DAILY path across the
     forward window — one labelled point per trading day (D+n · DD.MM) from
     forward_daily (cum_pct_from_ref), with the per-day move (daily_change_pct)
-    shown as a green/red label on each point — plus window outcome (MFE/MAE/now/
-    3-day trend) and the watchlist event facts. VIEW-ONLY, no signal/recommendation.
+    shown as a green/red label on each point — plus window outcome (peak/trough
+    since entry + 3-day trend) and the watchlist event facts. VIEW-ONLY, no signal.
+    DAILY-CLOSES source (forward_daily) only — the live now-state lives in the table.
     NOT the intraday minute path (that is the in-row sparkline)."""
     st.markdown(f"#### 🔎 {ticker} · כניסה {scan_date}")
-    mfe = mae = cur = trend3 = None        # window outcome (descriptive); filled when mature
+    mfe = mae = trend3 = None              # window outcome (descriptive); filled when mature
     fd = fdaily[(fdaily["scan_date"] == scan_date) & (fdaily["ticker"] == ticker)].copy() \
         if fdaily is not None and not fdaily.empty else fdaily
     if fd is None or fd.empty or "day_offset" not in fd.columns:
@@ -1217,7 +1218,7 @@ def _live_event_detail(ts, watch, fdaily, scan_date, ticker):
                                ycol: [0.0], "_chg": [float("nan")]})
         plot_df = pd.concat([anchor, fd[["_off", "יום", ycol, "_chg"]]], ignore_index=True)
         fig = px.line(plot_df, x="יום", y=ycol, markers=True,
-                      title=f"{ticker} — מסלול יומי על-פני החלון (cum% מהייחוס · תווית = שינוי יומי)")
+                      title=f"{ticker} — מעקב סגירות יומיות (forward_daily) · cum% מהכניסה · תווית = שינוי יומי")
         fig.update_traces(mode="lines+markers")
         # per-point daily-move label, green up / red down (descriptive colour cue only)
         for _, pt in plot_df.iterrows():
@@ -1226,32 +1227,33 @@ def _live_event_detail(ts, watch, fdaily, scan_date, ticker):
                 fig.add_annotation(x=pt["יום"], y=pt[ycol], text=f"{d:+.1f}%",
                                    showarrow=False, yshift=14,
                                    font=dict(size=12, color=GREEN if d >= 0 else RED))
-        fig.update_xaxes(tickfont=dict(size=14))
+        fig.update_xaxes(tickfont=dict(size=16))
         fig.update_layout(height=360, margin=dict(t=50, b=10, l=0, r=0))
         plot(st, fig)
         n_days = int(fd["_off"].max())
         fcum = pd.to_numeric(fd[ycol], errors="coerce").dropna()    # forward days only
         if not fcum.empty:
-            mfe, mae, cur = float(fcum.max()), float(fcum.min()), float(fcum.iloc[-1])
+            mfe, mae = float(fcum.max()), float(fcum.min())
         path = plot_df[ycol].dropna().reset_index(drop=True)        # incl. D+0 anchor
         if len(path) >= 4:                  # current vs 3 trading days back
             trend3 = float(path.iloc[-1] - path.iloc[-4])
 
-    # ── window outcome — descriptive (MFE / MAE / now / 3-day trend) ──────────────
+    # ── window outcome — descriptive, from forward_daily ONLY (peak / trough since
+    # entry + 3-day trend). NO "current" card here — the live now-state is the table's
+    # "% מהכניסה" (single source); forward_daily must not masquerade as the live now.
     def _pct(v):
         return f"{v:+.1f}%" if v is not None and pd.notna(v) else "—"
-    a = st.columns(4)
-    a[0].metric("שיא בחלון", _pct(mfe), border=True,
-                help="הכי גבוה שהגיע cum% מהייחוס מאז הכניסה (MFE תיאורי).")
-    a[1].metric("שפל בחלון", _pct(mae), border=True,
-                help="הכי נמוך שהגיע cum% מהייחוס מאז הכניסה (MAE תיאורי).")
-    a[2].metric("מצב נוכחי", _pct(cur), border=True,
-                help="cum% מהייחוס ביום-המסחר האחרון בחלון.")
+    a = st.columns(3)
+    a[0].metric("נקודת שיא מאז הכניסה", _pct(mfe), border=True,
+                help="הבסיס = מחיר-הכניסה = 0%. הנקודה הכי גבוהה שהגיע cum% מאז הכניסה "
+                     "(יכול להיות שלילי אם מעולם לא חזר לחיוב — אז השיא הוא הכניסה עצמה).")
+    a[1].metric("נקודת שפל מאז הכניסה", _pct(mae), border=True,
+                help="הבסיס = מחיר-הכניסה = 0%. הנקודה הכי נמוכה שהגיע cum% מאז הכניסה.")
     if trend3 is None:
-        a[3].metric("מגמת 3 ימים", "—", border=True, help="צריך ≥3 ימי-מסחר בחלון.")
+        a[2].metric("מגמת 3 ימים", "—", border=True, help="צריך ≥3 ימי-מסחר בחלון.")
     else:
         arrow = "▲" if trend3 > 0 else ("▼" if trend3 < 0 else "▬")
-        a[3].metric("מגמת 3 ימים", f"{arrow} {trend3:+.1f} נק'", delta_color="off",
+        a[2].metric("מגמת 3 ימים", f"{arrow} {trend3:+.1f} נק'", delta_color="off",
                     border=True, help="שינוי cum% מול 3 ימי-מסחר אחורה (תיאורי — סימן בלבד).")
 
     # ── event facts ──────────────────────────────────────────────────────────────
@@ -1296,40 +1298,45 @@ def render_live_status(kind=None):
         return
     view = (view.assign(_abs=pd.to_numeric(view["pct_from_open"], errors="coerce").abs())
                 .sort_values("_abs", ascending=False).reset_index(drop=True))
-    # "סוג" omitted (the page IS the kind); "עודכן (ET)" omitted (shown in the
-    # freshness caption above — no duplicate per-row timestamp).
+    # SINGLE-SOURCE: this table is LIVE-ONLY (intraday_timeseries vs the entry
+    # reference). The daily-closes view (forward_daily) lives ONLY in the detail
+    # panel — so NO `spark` column here (that was forward_daily leaking into the
+    # live table), and NO standalone direction column (folded into the coloured %).
     disp = view[["ticker", "scan_date", "dn", "reference", "price",
-                 "pct_from_open", "pct_from_ref", "volume", "spark"]].copy()
-    # Direction indicator that does NOT need a Styler (a Styler input silently breaks
-    # st.dataframe row selection): a native 🟢/🔴 text column by the day's sign.
-    pf_disp = pd.to_numeric(disp["pct_from_open"], errors="coerce")
-    disp.insert(disp.columns.get_loc("pct_from_open"), "dir",
-                pf_disp.map(lambda v: "🟢" if pd.notna(v) and v >= 0
-                            else ("🔴" if pd.notna(v) else "")))
+                 "pct_from_open", "pct_from_ref", "volume"]].copy()
 
-    # PLAIN DataFrame (NOT a Styler) so on_select row-selection works — the exact
-    # canonical path render_overview uses (plain df + column_config + LineChartColumn).
-    # Formatting via column_config.NumberColumn (sign-prefixed %); colour-by-sign
-    # background is dropped (Styler-only) — direction stays via the 🟢/🔴 col + the
-    # +/- sign + the daily sparkline.
+    # Colour per-cell WITHOUT a Styler (a Styler input silently breaks st.dataframe
+    # row-selection — the d28c6cc saga): a green/red emoji PREFIX on each % cell.
+    # This is the only no-Styler way to colour a cell and keep on_select working.
+    def _sign_pct(s):
+        s = pd.to_numeric(s, errors="coerce")
+        return s.map(lambda v: f"🟢 {v:+.2f}%" if pd.notna(v) and v >= 0
+                     else (f"🔴 {v:+.2f}%" if pd.notna(v) else "—"))
+    disp["pct_from_open"] = _sign_pct(disp["pct_from_open"])
+    disp["pct_from_ref"] = _sign_pct(disp["pct_from_ref"])
+
+    # PLAIN DataFrame (NOT a Styler) so on_select row-selection works. The two %
+    # columns are TextColumns (they now carry the 🟢/🔴 colour prefix).
     cfg = {
         "ticker": st.column_config.TextColumn("טיקר"),
         "scan_date": st.column_config.TextColumn("כניסה"),
         "dn": st.column_config.NumberColumn(
             "D+n", format="%d", help="ימי-מסחר מ-scan_date (לוח גלובלי; מדלג ימי-שבתון/חג)"),
         "reference": st.column_config.NumberColumn(
-            "מחיר-ייחוס", format="%.2f",
-            help="נקודת-ההתחלה: intraday=open ביום-הצניחה · gradual=ref_close"),
-        "price": st.column_config.NumberColumn("מחיר נוכחי", format="%.2f"),
-        "dir": st.column_config.TextColumn("כיוון", help="🟢 עולה / 🔴 יורד (לפי % שינוי יומי)"),
-        "pct_from_open": st.column_config.NumberColumn(
-            "% שינוי יומי", format="%+.2f%%", help="תנועת המחיר היום מהפתיחה (תוך-יומי)"),
-        "pct_from_ref": st.column_config.NumberColumn(
-            "% מהייחוס", format="%+.2f%%",
-            help="מאז נקודת-הצניחה: (מחיר נוכחי − מחיר-ייחוס) / מחיר-ייחוס"),
-        "volume": st.column_config.NumberColumn("נפח", format="%d"),
-        "spark": st.column_config.LineChartColumn(
-            "מסלול יומי", help="cum% מהייחוס לכל יום-מסחר (כמו גרף-הפירוט)"),
+            "מחיר-כניסה", format="%.2f",
+            help="נקודת-הכניסה (הייחוס): intraday=open ביום-הצניחה · gradual=ref_close_window"),
+        "price": st.column_config.NumberColumn(
+            "מחיר חי", format="%.2f",
+            help="המחיר העדכני מ-intraday_timeseries (חי, בשעות-מסחר)"),
+        "pct_from_open": st.column_config.TextColumn(
+            "שינוי-יום %",
+            help="תנועת המחיר היום מהפתיחה (תוך-יומי) — 🟢 עלה היום / 🔴 ירד היום"),
+        "pct_from_ref": st.column_config.TextColumn(
+            "% מהכניסה",
+            help="סך מצטבר חי מאז הכניסה: (מחיר חי − מחיר-כניסה) / מחיר-כניסה — "
+                 "🟢 מעל הכניסה / 🔴 מתחת לכניסה"),
+        "volume": st.column_config.NumberColumn(
+            "נפח", format="%d", help="נפח חי מ-intraday_timeseries"),
     }
     event = st.dataframe(disp, column_config=cfg, hide_index=True, width="stretch",
                          height=720, key=f"live_tbl_{kind}",
