@@ -9,8 +9,11 @@ from streamlit.testing.v1 import AppTest
 import config
 import dashboard_common as common
 
-FORBIDDEN = ["cliff", "delta", "salient", "top-10", "top 10", "signal",
-             "score", "threshold", "up-vs-down", "up vs down", "ranking"]
+# The page now legitimately shows Cliff's delta / a top-10 / up-down separation
+# (DESCRIPTIVE). The genuinely-forbidden M5 terms are only those implying a
+# decision: a unified score, an entry rule, or a buy/sell recommendation.
+FORBIDDEN = ["buy", "sell", "קנה", "מכור", "recommend", "המלצה",
+             "ציון מאוחד", "unified score", "entry rule", "כלל כניסה", "כדאי לקנות"]
 
 
 def _patch(monkeypatch):
@@ -42,9 +45,13 @@ def _patch(monkeypatch):
 
 def _rendered_text(at):
     parts = []
-    for kind in ("title", "header", "subheader", "caption", "markdown"):
-        for el in getattr(at, kind):
-            parts.append(str(getattr(el, "value", "")))
+    for kind in ("title", "header", "subheader", "caption", "markdown", "info",
+                 "warning", "error"):
+        try:
+            for el in getattr(at, kind):
+                parts.append(str(getattr(el, "value", "")))
+        except Exception:
+            pass
     return " ".join(parts)
 
 
@@ -54,6 +61,8 @@ def test_entry_profile_intraday_renders_m5_safe(monkeypatch):
     assert not at.exception, f"page crashed: {at.exception}"
     text = _rendered_text(at)
     assert "DESCRIPTIVE" in text or "תיאורי" in text     # banner present
+    assert "טבלת הפרדה" in text and "הבולטים" in text     # main + top-10 separation tables
+    assert "חוצה רצפת-רעש" in text                        # legend (null-band) is shown
     assert len(at.markdown) >= 1                          # a table rendered (show_table → markdown)
     low = text.lower()
     hits = [t for t in FORBIDDEN if t in low]

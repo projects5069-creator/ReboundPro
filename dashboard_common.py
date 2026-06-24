@@ -15,6 +15,7 @@ import copy
 import math
 
 import gspread
+import numpy as np
 import pandas as pd
 import plotly.express as px
 import plotly.graph_objects as go
@@ -538,6 +539,182 @@ def count_completed(fdaily, horizon=None):
     mx = (fdaily.assign(_o=pd.to_numeric(fdaily["day_offset"], errors="coerce"))
           .groupby(["scan_date", "ticker"])["_o"].max())
     return int((mx >= h).sum())
+
+
+# ── ported pure separation stats (M5-safe DESCRIPTIVE in-sample separation) ────
+# Cliff's delta + permutation null band, pure numpy (scipy is not a dep). Ports the
+# TDD'd research/entry_profile/descriptive_stats.py. Feeds the Entry-Profile
+# separation tables. NOTHING here is a score / entry-rule / recommendation — it
+# measures observed separation between the (still-maturing) up/down groups only.
+SEP_SEED = 42
+_BAND_NEGLIGIBLE, _BAND_SMALL, _BAND_MEDIUM = 0.147, 0.33, 0.474
+
+
+def _clean_arr(a):
+    a = np.asarray(a, dtype=float)
+    return a[~np.isnan(a)]
+
+
+def split_groups(outcome):
+    """up = outcome > 0 ; down = outcome <= 0 (0 → down); NaN → neither."""
+    arr = np.asarray(outcome, dtype=float)
+    nan = np.isnan(arr)
+    return (arr > 0) & ~nan, (arr <= 0) & ~nan
+
+
+def magnitude_label(delta):
+    """|delta| → negligible/small/medium/large; nan → '—'."""
+    if delta is None or (isinstance(delta, float) and np.isnan(delta)):
+        return "—"
+    a = abs(float(delta))
+    if a < _BAND_NEGLIGIBLE:
+        return "negligible"
+    if a < _BAND_SMALL:
+        return "small"
+    if a < _BAND_MEDIUM:
+        return "medium"
+    return "large"
+
+
+def cliffs_delta(x, y):
+    """δ = [#(x>y) − #(x<y)] / (n_x·n_y) via two searchsorted calls. NaN dropped;
+    ties excluded from the numerator; empty group → nan. Returns dict."""
+    x, y = _clean_arr(x), _clean_arr(y)
+    n_x, n_y = int(x.size), int(y.size)
+    if n_x == 0 or n_y == 0:
+        return {"delta": float("nan"), "n_x": n_x, "n_y": n_y, "magnitude": "—"}
+    ys = np.sort(y)
+    num_gt = int(np.searchsorted(ys, x, side="left").sum())
+    num_le = int(np.searchsorted(ys, x, side="right").sum())
+    num_lt = n_x * n_y - num_le
+    delta = float(max(-1.0, min(1.0, (num_gt - num_lt) / (n_x * n_y))))
+    return {"delta": delta, "n_x": n_x, "n_y": n_y, "magnitude": magnitude_label(delta)}
+
+
+def side_fractions(x, y, threshold):
+    """(pct_up_above, pct_down_above) — % of each group with value > threshold."""
+    x, y = _clean_arr(x), _clean_arr(y)
+    up_a = float((x > threshold).mean() * 100) if x.size else float("nan")
+    down_a = float((y > threshold).mean() * 100) if y.size else float("nan")
+    return up_a, down_a
+
+
+def midpoint_threshold(x, y):
+    """threshold = mean(median(x), median(y)) + the side fractions at it."""
+    x, y = _clean_arr(x), _clean_arr(y)
+    if x.size == 0 or y.size == 0:
+        return {"threshold": float("nan"), "pct_up_above": float("nan"),
+                "pct_down_above": float("nan")}
+    thr = float((np.median(x) + np.median(y)) / 2.0)
+    up_a, down_a = side_fractions(x, y, thr)
+    return {"threshold": thr, "pct_up_above": up_a, "pct_down_above": down_a}
+
+
+def permute_labels(up_mask, k, rng):
+    """(k, n) boolean matrix; each row a permutation of up_mask (sizes preserved)."""
+    up_mask = np.asarray(up_mask, dtype=bool)
+    out = np.empty((k, up_mask.size), dtype=bool)
+    for i in range(k):
+        out[i] = rng.permutation(up_mask)
+    return out
+
+
+def _abs_delta(values, lbl):
+    d = cliffs_delta(values[lbl], values[~lbl])["delta"]
+    return 0.0 if np.isnan(d) else abs(d)
+
+
+def permutation_band(values, up_mask, k=1000, seed=SEP_SEED):
+    """Null distribution of |Cliff's delta| under K label shuffles (group sizes
+    fixed). Returns dict{null, observed_abs_delta, p_value, exceeds_95, exceeds_99}."""
+    values = np.asarray(values, dtype=float)
+    up_mask = np.asarray(up_mask, dtype=bool)
+    obs = cliffs_delta(values[up_mask], values[~up_mask])["delta"]
+    obs_abs = float("nan") if np.isnan(obs) else abs(obs)
+    rng = np.random.default_rng(seed)
+    mats = permute_labels(up_mask, k, rng)
+    null = np.array([_abs_delta(values, mats[i]) for i in range(k)])
+    if np.isnan(obs_abs):
+        return {"null": null, "observed_abs_delta": obs_abs, "p_value": float("nan"),
+                "exceeds_95": False, "exceeds_99": False}
+    p = (1 + int(np.sum(null >= obs_abs))) / (k + 1)
+    return {"null": null, "observed_abs_delta": obs_abs, "p_value": float(p),
+            "exceeds_95": bool(obs_abs > np.percentile(null, 95)),
+            "exceeds_99": bool(obs_abs > np.percentile(null, 99))}
+
+
+def family_wise_max_null(value_cols, up_mask, k=1000, seed=SEP_SEED):
+    """ONE shared shuffle per iteration across ALL metrics → (k,) array of
+    max_metric |delta| (multiplicity-corrected null). Pass only non-empty metrics."""
+    up_mask = np.asarray(up_mask, dtype=bool)
+    cols = [np.asarray(v, dtype=float) for v in value_cols]
+    rng = np.random.default_rng(seed)
+    mats = permute_labels(up_mask, k, rng)
+    maxnull = np.zeros(k)
+    for i in range(k):
+        lbl = mats[i]
+        maxnull[i] = max((_abs_delta(v, lbl) for v in cols), default=0.0)
+    return maxnull
+
+
+def build_separation_table(events, metrics, pct_col="pct_from_entry", k=1000, seed=SEP_SEED):
+    """DESCRIPTIVE per-metric separation between the up (pct_col > 0) and down (<= 0)
+    groups of the CURRENT change-from-entry. Per metric: n_up/n_down, median_up,
+    median_down, Cliff's delta, magnitude, direction (🟢 delta>0 / 🔴 <0 / ▬ ≈0|nan),
+    side-fractions at the midpoint threshold, and `crosses` = |delta| exceeds the
+    95th pct of the FAMILY-WISE (multiplicity-corrected) permutation null over the
+    non-empty metrics. NOT a score/entry-rule — observed in-sample separation only,
+    on a still-maturing outcome (the sign can flip). One row per metric."""
+    cols = ["metric", "n_up", "n_down", "median_up", "median_down", "delta",
+            "magnitude", "direction", "pct_upside_up", "pct_upside_down", "crosses"]
+    if events is None or events.empty or pct_col not in events.columns:
+        return pd.DataFrame(columns=cols)
+    pct = pd.to_numeric(events[pct_col], errors="coerce").to_numpy()
+    up_all, down_all = split_groups(pct)
+    labeled = up_all | down_all
+    sub = events[labeled]
+    upm = up_all[labeled]
+    arrs = {m: (pd.to_numeric(sub[m], errors="coerce").to_numpy()
+                if m in sub.columns else np.full(len(sub), np.nan)) for m in metrics}
+    valid = len(sub) > 0 and upm.sum() > 0 and (~upm).sum() > 0
+    nonempty = [m for m in metrics if np.isfinite(arrs[m]).any()]
+    fw95 = float("nan")
+    if valid and nonempty:
+        maxnull = family_wise_max_null([arrs[m] for m in nonempty], upm, k=k, seed=seed)
+        fw95 = float(np.percentile(maxnull, 95))
+
+    rows = []
+    for m in metrics:
+        a = arrs[m]
+        x, y = a[upm], a[~upm]
+        cd = cliffs_delta(x, y)
+        delta = cd["delta"]
+        mid = midpoint_threshold(x, y)
+        uu, dd = ((float("nan"), float("nan")) if np.isnan(mid["threshold"])
+                  else side_fractions(x, y, mid["threshold"]))
+        xc, yc = _clean_arr(x), _clean_arr(y)
+        direction = "▬" if (np.isnan(delta) or delta == 0) else ("🟢" if delta > 0 else "🔴")
+        obs_abs = float("nan") if np.isnan(delta) else abs(delta)
+        crosses = bool(valid and not np.isnan(obs_abs) and not np.isnan(fw95) and obs_abs > fw95)
+        rows.append({
+            "metric": m, "n_up": cd["n_x"], "n_down": cd["n_y"],
+            "median_up": round(float(np.median(xc)), 3) if xc.size else float("nan"),
+            "median_down": round(float(np.median(yc)), 3) if yc.size else float("nan"),
+            "delta": round(delta, 3) if not np.isnan(delta) else float("nan"),
+            "magnitude": cd["magnitude"], "direction": direction,
+            "pct_upside_up": round(uu, 1) if not np.isnan(uu) else float("nan"),
+            "pct_upside_down": round(dd, 1) if not np.isnan(dd) else float("nan"),
+            "crosses": crosses})
+    return pd.DataFrame(rows, columns=cols)
+
+
+def top_separation(table, n=10):
+    """Top-n metrics by |Cliff's delta| (desc; NaN delta sorted last)."""
+    if table is None or table.empty:
+        return table
+    t = table.assign(_abs=table["delta"].abs())
+    return (t.sort_values("_abs", ascending=False, na_position="last")
+            .drop(columns="_abs").head(n).reset_index(drop=True))
 
 
 def sidebar_controls(sheet_id):
@@ -1605,13 +1782,34 @@ def _signed_pct_str(series):
                  else (f"🔴 {v:+.2f}%" if pd.notna(v) else "—"))
 
 
+def _sep_row_style(row):
+    """Row styling for the separation table. Direction = a SOFT/light Finviz-style
+    tint (gentle hint only). The strong signal (fuller fill + bold + a leading-edge
+    accent border) is reserved for metrics that CROSS the family-wise noise band —
+    so crossers pop and the rest stay calm. Expects hidden cols `_dir`, `_cross`."""
+    d, cr = row["_dir"], row["_cross"]
+    if d not in ("🟢", "🔴"):
+        return [""] * len(row)            # ▬ neutral — no colour
+    if d == "🟢":
+        bg, accent = ("#b7e4c7" if cr else "#e9f7ef"), "#1e8449"
+    else:
+        bg, accent = ("#f5b7b1" if cr else "#fdecea"), "#c0392b"
+    cell = f"background-color:{bg};color:#111;" + ("font-weight:700;" if cr else "")
+    styles = [cell] * len(row)
+    if cr:                                # accent only on the leading (RTL-right) cell
+        styles[0] = cell + f"border-right:4px solid {accent};"
+    return styles
+
+
 def render_entry_profile(kind):
-    """DESCRIPTIVE entry-condition profile for ONE strata (kind ∈ intraday_drop /
-    gradual_drop), never mixing strata. View-only, M5-safe: NO scores/signals/
-    ranking/recommendations, NO separating thresholds, effect sizes, salient/top-N,
-    or up-vs-down split distributions. Sections: (1) per-event table — entry metrics
-    + CURRENT % from entry (one-source-per-datum), (2) collection status, (3)
-    coverage (%-filled), (4) pooled per-metric distribution (median/IQR/min-max)."""
+    """DESCRIPTIVE entry-condition SEPARATION profile for ONE strata (kind ∈
+    intraday_drop / gradual_drop), never mixing strata. View-only, M5-safe: it
+    reports observed in-sample SEPARATION (Cliff's delta + family-wise permutation
+    null band) between the up/down groups of the CURRENT change-from-entry — it is
+    NOT a unified score, an entry rule, or a buy/sell recommendation, and the window
+    is still maturing (the sign can flip). Finviz-style metric tables, no charts:
+    (1) all-metrics separation table (colored), (2) top-10 by |delta|, (3) collection
+    KPIs, (4) coverage, (5) reference per-event table (expander)."""
     page_header(_ENTRY_PROFILE_TITLES.get(kind, "🔬 פרופיל כניסה"),
                 "DESCRIPTIVE · תיאורי בלבד · " + VIEW_ONLY)
     sheet_id = resolve_sheet_id()
@@ -1644,49 +1842,65 @@ def render_entry_profile(kind):
     events = watch.drop_duplicates(["scan_date", "ticker"]).copy()
     cur = current_pct_from_entry(events, fdaily)
     disp = events.merge(cur, on=["scan_date", "ticker"], how="left")
+    sep = build_separation_table(disp, ENTRY_PROFILE_METRICS)
 
-    # ── 1) per-event table (CURRENT STATUS, not an outcome) ──────────────────
-    st.subheader("📋 אירועים — מדדי כניסה + שינוי נוכחי מהכניסה")
-    st.caption("⚠️ סטטוס נוכחי — החלון עוד מבשיל, הסימן יכול להתהפך. זו אינה תוצאה. "
-               "מקור ה-% מתויג לכל שורה: 📅 forward_daily (יום אחרון בחלון) או 🟢 live "
-               "(מחיר נוכחי מול מחיר-הכניסה) — one-source-per-datum.")
-    cols = ["scan_date", "ticker", "source", "sector", "market_cap_category",
-            "market_regime", "rsi_14", "atr_pct", "dist_sma50", "dist_sma200",
-            "drop_day_rel_volume", "pct_from_entry", "pct_source"]
-    d = disp[[c for c in cols if c in disp.columns]].copy()
-    if "pct_from_entry" in d.columns:
-        d["שינוי נוכחי %"] = _signed_pct_str(d["pct_from_entry"])
-        d = d.drop(columns=["pct_from_entry"])
-    d = d.rename(columns={"pct_source": "מקור-%"})
-    show_table(d.sort_values("scan_date", ascending=False), height=560)
+    # ── 1) MAIN — all-metrics separation table (Finviz-style, colored) ───────
+    st.subheader("🧭 טבלת הפרדה — כל המדדים")
+    st.info("**מקרא:** צבע רקע = כיוון ההפרדה (🟢 נוטה לעולים · 🔴 נוטה ליורדים) · "
+            "**מודגש = חוצה רצפת-רעש** (permutation family-wise, K=1000) · "
+            "כרגע ייתכן שאף מדד לא מודגש = עוד אין מבדיל אמיתי. "
+            "הפיצול לפי השינוי הנוכחי מהכניסה (עולה>0 / יורד≤0) — החלון מבשיל, הסימן יכול להתהפך.")
 
-    # ── 2) collection status ─────────────────────────────────────────────────
+    main = sep.assign(_dir=sep["direction"], _cross=sep["crosses"])[
+        ["metric", "median_up", "median_down", "delta", "_dir", "_cross"]].rename(
+        columns={"metric": "מדד", "median_up": "חציון-עולים",
+                 "median_down": "חציון-יורדים", "delta": "Cliff's delta"})
+    main_sty = (main.style.apply(_sep_row_style, axis=1)
+                .format({"חציון-עולים": "{:,.2f}", "חציון-יורדים": "{:,.2f}",
+                         "Cliff's delta": "{:+.3f}"}, na_rep="—")
+                .hide(["_dir", "_cross"], axis="columns").hide(axis="index"))
+    show_table(main_sty, rename=None)
+
+    # ── 2) Top-10 by |delta| ─────────────────────────────────────────────────
+    st.subheader("🏅 10 הבולטים (|Cliff's delta| הגדול ביותר)")
+    topd = top_separation(sep, 10)[["metric", "median_up", "median_down",
+                                    "pct_upside_up", "pct_upside_down", "direction", "crosses"]].copy()
+    topd["crosses"] = topd["crosses"].map(lambda b: "✔ חוצה" if b else "—")
+    topd = topd.rename(columns={
+        "metric": "מדד", "median_up": "חציון-עולים", "median_down": "חציון-יורדים",
+        "pct_upside_up": "%בצד-עולים (עולים)", "pct_upside_down": "%בצד-עולים (יורדים)",
+        "direction": "כיוון", "crosses": "חוצה-רעש?"})
+    show_table(topd, rename=None)
+
+    # ── 3) collection status (numbers only — no charts) ──────────────────────
     st.subheader("📈 סטטוס איסוף")
-    cum, total, by_source = collection_progress(events)
+    _, total, by_source = collection_progress(events)
     completed = count_completed(fdaily)
     pct_done = round(100 * completed / ENTRY_PROFILE_TARGET) if ENTRY_PROFILE_TARGET else 0
     c = st.columns(3)
     kpi(c[0], "נאספו (אירועים)", total)
     kpi(c[1], f"הושלמו (חלון בשל ≥D+{config.POST_ANALYSIS_HORIZON})", completed)
     kpi(c[2], f"התקדמות ליעד ~{ENTRY_PROFILE_TARGET} (הושלמו)", f"{pct_done}%")
-    st.caption("היעד (~200, M3) נמדד באירועים שהושלמו — חלון בשל. 'נאספו' אינו 'הושלם'.")
-    if not cum.empty:
-        # collected-over-time only (no target line — target is COMPLETED, not collected)
-        plot(st, px.line(cum, x="scan_date", y="cum_n", markers=True,
-                         title="הצטברות אירועים שנאספו לאורך זמן"))
-    if by_source:
-        bs = pd.DataFrame([{"source": k, "count": v} for k, v in sorted(by_source.items())])
-        plot(st, px.bar(bs, x="source", y="count", title="פילוח לפי מקור"))
+    bys = " · ".join(f"{k}: {v}" for k, v in sorted(by_source.items())) if by_source else "—"
+    st.caption(f"פילוח לפי מקור — {bys}. היעד (~200, M3) נמדד באירועים שהושלמו; 'נאספו' אינו 'הושלם'.")
 
-    # ── 3) coverage (%-filled) ───────────────────────────────────────────────
-    dist = metric_distributions(disp, ENTRY_PROFILE_METRICS)
+    # ── 4) coverage (%-filled) ───────────────────────────────────────────────
     st.subheader("🧮 כיסוי — %מולא לכל מדד")
     st.caption("ריק ב-dist_sma200 / dist_sma50 = young listing לגיטימי "
                "(פחות מ-200 / 50 ברי-מסחר). שקיפות, לא שער חוסם.")
-    show_table(dist[["metric", "n_filled", "pct_filled"]], rename=None)
+    cov = metric_distributions(disp, ENTRY_PROFILE_METRICS)[["metric", "n_filled", "pct_filled"]]
+    show_table(cov, rename=None)
 
-    # ── 4) pooled per-metric distribution (NOT split up/down) ────────────────
-    st.subheader("📊 התפלגות תיאורית לכל מדד")
-    st.caption("חציון · IQR (Q1–Q3) · מין–מקס, על כלל אירועי הסטרטה (pooled). "
-               "תיאורי בלבד — ללא פיצול, ללא דירוג, ללא רפים.")
-    show_table(dist[["metric", "median", "q1", "q3", "iqr", "vmin", "vmax"]], rename=None)
+    # ── 5) reference per-event table (compact, in an expander) ───────────────
+    with st.expander("📋 טבלת אירועים (רשימת-ייחוס · סטטוס נוכחי, לא תוצאה)", expanded=False):
+        st.caption("⚠️ סטטוס נוכחי — החלון מבשיל, הסימן יכול להתהפך. מקור ה-% מתויג לכל "
+                   "שורה: 📅 forward_daily (יום אחרון) או 🟢 live — one-source-per-datum.")
+        cols = ["scan_date", "ticker", "source", "sector", "market_cap_category",
+                "market_regime", "rsi_14", "atr_pct", "dist_sma50", "dist_sma200",
+                "drop_day_rel_volume", "pct_from_entry", "pct_source"]
+        d = disp[[c for c in cols if c in disp.columns]].copy()
+        if "pct_from_entry" in d.columns:
+            d["שינוי נוכחי %"] = _signed_pct_str(d["pct_from_entry"])
+            d = d.drop(columns=["pct_from_entry"])
+        d = d.rename(columns={"pct_source": "מקור-%"})
+        show_table(d.sort_values("scan_date", ascending=False), height=420)

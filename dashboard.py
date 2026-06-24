@@ -15,10 +15,11 @@ totals, then "pick a page in the sidebar".
 Run locally:  streamlit run dashboard.py
 Streamlit Cloud entrypoint stays dashboard.py; pages/ is auto-discovered.
 """
-# Streamlit Cloud redeploy marker — 2026-06-24a (new DESCRIPTIVE Entry-Profile pages
-# 6/7 — per-strata entry metrics + current change-from-entry, collection status,
-# coverage, pooled distributions; M5-safe. atr_pct/dist_sma50/dist_sma200 now
-# collected). Bump to force a clean reboot.
+# Streamlit Cloud redeploy marker — 2026-06-24b (Entry-Profile pages 6/7 reshaped to
+# Finviz-style metric SEPARATION tables: per-metric median-up/median-down + Cliff's
+# delta, soft direction tint + bold/accent only for metrics crossing the family-wise
+# (K=1000) permutation noise band; top-10 by |delta|; charts removed, KPIs as numbers,
+# old stock table → expander. DESCRIPTIVE / M5-safe). Bump to force a clean reboot.
 import gspread
 import streamlit as st
 
