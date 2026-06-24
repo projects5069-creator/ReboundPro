@@ -90,7 +90,9 @@ NUM_WATCH = ["drop_pct_from_open", "close_pct_from_open", "pct_change_prevclose"
              "vix_level", "drop_day_rel_volume",
              "sector_momentum_5d", "sector_momentum_20d",
              # descriptive ATR features (M3 — Vardan-gap)
-             "atr_14", "drop_in_atr"]
+             "atr_14", "drop_in_atr",
+             # descriptive SMA / vol-normalized features
+             "atr_pct", "dist_sma50", "dist_sma200"]
 NUM_POST = ["ref_close", "max_recovery_pct", "max_further_drop_pct",
             "last_close_pct", "forward_days_available", "horizon",
             "day_of_max_recovery", "day_of_max_drop",
@@ -117,6 +119,7 @@ PCT_COLS = {
     "pct_from_52w_high", "pct_from_52w_low", "prior_decline_20d_pct",
     "prior_decline_60d_pct", "recovery_from_trough_pct", "max_recovery_from_trough_pct",
     "sector_momentum_5d", "sector_momentum_20d",
+    "atr_pct", "dist_sma50", "dist_sma200",
 } | {f"max_recovery_{w}d" for w in config.POST_ANALYSIS_SUBWINDOWS} \
   | {f"max_further_drop_{w}d" for w in config.POST_ANALYSIS_SUBWINDOWS}
 INT_COLS = {
@@ -442,6 +445,99 @@ def outcome_histogram(last_close_series):
         n = int((s >= lo).sum()) if hi == math.inf else int(((s >= lo) & (s < hi)).sum())
         rows.append({"bucket": name, "count": n})
     return pd.DataFrame(rows)
+
+
+def _num1(v):
+    """Single value → float or nan (sheet cells arrive as strings/blanks)."""
+    return pd.to_numeric(pd.Series([v]), errors="coerce").iloc[0]
+
+
+def current_pct_from_entry(watch, fdaily):
+    """Per event, the CURRENT % from entry + its single source (one-source-per-datum):
+      • 'forward_daily' — cum_pct_from_ref of the LAST available forward day
+        (the window, still maturing).
+      • 'live' — (price - reference)/reference*100 for an active event with no
+        forward rows yet; reference = open (intraday_drop) / ref_close_window
+        (gradual_drop).
+    DESCRIPTIVE current status (the window is still maturing → the sign can flip),
+    NOT an outcome. Returns df[scan_date, ticker, pct_from_entry, pct_source]."""
+    cols = ["scan_date", "ticker", "pct_from_entry", "pct_source"]
+    if watch is None or watch.empty:
+        return pd.DataFrame(columns=cols)
+    base = watch.drop_duplicates(["scan_date", "ticker"]).copy()
+    last_fwd = {}
+    if fdaily is not None and not fdaily.empty and \
+            {"scan_date", "ticker", "day_offset", "cum_pct_from_ref"} <= set(fdaily.columns):
+        f = fdaily.assign(_o=pd.to_numeric(fdaily["day_offset"], errors="coerce")).sort_values("_o")
+        for (sd, tk), g in f.groupby(["scan_date", "ticker"]):
+            vals = pd.to_numeric(g["cum_pct_from_ref"], errors="coerce").dropna()
+            if len(vals):
+                last_fwd[(str(sd), str(tk))] = float(vals.iloc[-1])
+    out = []
+    for _, r in base.iterrows():
+        sd, tk = str(r["scan_date"]), str(r["ticker"])
+        if (sd, tk) in last_fwd:
+            out.append({"scan_date": sd, "ticker": tk,
+                        "pct_from_entry": last_fwd[(sd, tk)], "pct_source": "forward_daily"})
+            continue
+        kind = r.get("drop_kind") or "intraday_drop"
+        ref = _num1(r.get("ref_close_window") if kind == "gradual_drop" else r.get("open"))
+        price = _num1(r.get("price"))
+        pct = round((price - ref) / ref * 100, 2) if (ref == ref and ref > 0 and price == price) else float("nan")
+        out.append({"scan_date": sd, "ticker": tk, "pct_from_entry": pct, "pct_source": "live"})
+    return pd.DataFrame(out, columns=cols)
+
+
+def metric_distributions(df, numeric_cols):
+    """Pooled descriptive distribution per numeric metric — median, IQR (Q1–Q3),
+    min–max, %filled — over ALL strata events (NOT split up/down; no ranking).
+    DESCRIPTIVE only (M5-safe). Returns one row per metric."""
+    cols = ["metric", "n_filled", "pct_filled", "median", "q1", "q3", "iqr", "vmin", "vmax"]
+    n = 0 if df is None else len(df)
+    rows = []
+    for c in numeric_cols:
+        s = (pd.to_numeric(df[c], errors="coerce").dropna()
+             if (df is not None and c in df.columns) else pd.Series(dtype=float))
+        nf = int(s.size)
+        if nf == 0:
+            rows.append({"metric": c, "n_filled": 0, "pct_filled": 0.0, "median": float("nan"),
+                         "q1": float("nan"), "q3": float("nan"), "iqr": float("nan"),
+                         "vmin": float("nan"), "vmax": float("nan")})
+            continue
+        q1, q3 = float(s.quantile(0.25)), float(s.quantile(0.75))
+        rows.append({"metric": c, "n_filled": nf,
+                     "pct_filled": round(100.0 * nf / n, 1) if n else 0.0,
+                     "median": round(float(s.median()), 3), "q1": round(q1, 3), "q3": round(q3, 3),
+                     "iqr": round(q3 - q1, 3), "vmin": round(float(s.min()), 3),
+                     "vmax": round(float(s.max()), 3)})
+    return pd.DataFrame(rows, columns=cols)
+
+
+def collection_progress(watch):
+    """Collection status: cumulative unique-event count over scan_date + total +
+    counts by source. Returns (cum_df[scan_date,n,cum_n], total, by_source dict)."""
+    if watch is None or watch.empty:
+        return pd.DataFrame(columns=["scan_date", "n", "cum_n"]), 0, {}
+    ev = watch.drop_duplicates(["scan_date", "ticker"]).copy()
+    total = len(ev)
+    by_source = (ev["source"].fillna("?").replace("", "?").value_counts().to_dict()
+                 if "source" in ev.columns else {})
+    g = ev.groupby("scan_date").size().reset_index(name="n").sort_values("scan_date")
+    g["cum_n"] = g["n"].cumsum()
+    return g.reset_index(drop=True), total, by_source
+
+
+def count_completed(fdaily, horizon=None):
+    """Number of events whose forward window has MATURED — max day_offset >= horizon
+    (config.POST_ANALYSIS_HORIZON). The M3 ~200 target counts COMPLETED events, not
+    merely collected ones, so the page never implies a maturity that isn't there."""
+    h = config.POST_ANALYSIS_HORIZON if horizon is None else horizon
+    if fdaily is None or fdaily.empty or \
+            not {"scan_date", "ticker", "day_offset"} <= set(fdaily.columns):
+        return 0
+    mx = (fdaily.assign(_o=pd.to_numeric(fdaily["day_offset"], errors="coerce"))
+          .groupby(["scan_date", "ticker"])["_o"].max())
+    return int((mx >= h).sum())
 
 
 def sidebar_controls(sheet_id):
@@ -1483,3 +1579,114 @@ def render_system_health(sheet_id=None):
                         st.write(f"{r.get(cid, '')} — {cid}")
     if len(view) > 25:
         st.caption(f"(מוצגים 25 הראשונים מתוך {len(view)})")
+
+
+# ── Entry-Profile pages (DESCRIPTIVE / M5-safe) ──────────────────────────────
+# Per-strata view of entry conditions + current change-from-entry. View-only.
+# DELIBERATELY NOT HERE (M5): scores, signals, ranking, separating thresholds,
+# effect sizes (Cliff's delta), salient/top-N, or up-vs-down split distributions.
+ENTRY_PROFILE_TARGET = 200
+_ENTRY_PROFILE_TITLES = {"intraday_drop": "🔬 פרופיל כניסה — ⚡ Intraday",
+                         "gradual_drop": "🔬 פרופיל כניסה — 🐢 Gradual"}
+# numeric entry metrics profiled (header order; no ordering implies importance)
+ENTRY_PROFILE_METRICS = [
+    "drop_pct_from_open", "close_pct_from_open", "pct_change_prevclose",
+    "drop_pct_window", "volume_ratio", "drop_day_rel_volume", "rsi_14",
+    "atr_14", "atr_pct", "drop_in_atr", "dist_sma50", "dist_sma200",
+    "pct_from_52w_high", "pct_from_52w_low", "prior_decline_20d_pct",
+    "prior_decline_60d_pct", "vix_level", "sector_momentum_5d", "sector_momentum_20d",
+    "spy_change_pct", "sector_etf_change_pct", "market_cap", "adv_dollar",
+]
+
+
+def _signed_pct_str(series):
+    s = pd.to_numeric(series, errors="coerce")
+    return s.map(lambda v: f"🟢 {v:+.2f}%" if pd.notna(v) and v >= 0
+                 else (f"🔴 {v:+.2f}%" if pd.notna(v) else "—"))
+
+
+def render_entry_profile(kind):
+    """DESCRIPTIVE entry-condition profile for ONE strata (kind ∈ intraday_drop /
+    gradual_drop), never mixing strata. View-only, M5-safe: NO scores/signals/
+    ranking/recommendations, NO separating thresholds, effect sizes, salient/top-N,
+    or up-vs-down split distributions. Sections: (1) per-event table — entry metrics
+    + CURRENT % from entry (one-source-per-datum), (2) collection status, (3)
+    coverage (%-filled), (4) pooled per-metric distribution (median/IQR/min-max)."""
+    page_header(_ENTRY_PROFILE_TITLES.get(kind, "🔬 פרופיל כניסה"),
+                "DESCRIPTIVE · תיאורי בלבד · " + VIEW_ONLY)
+    sheet_id = resolve_sheet_id()
+    if not sheet_id:
+        st.error("REBOUND_SHEET_ID לא מוגדר (.env / env / st.secrets). אין מקור נתונים.")
+        st.stop()
+    sidebar_controls(sheet_id)
+    try:
+        data = load_many(sheet_id, {config.TAB_WATCHLIST: NUM_WATCH,
+                                    config.TAB_FORWARD_DAILY: NUM_FDAILY})
+        watch, fdaily = data[config.TAB_WATCHLIST], data[config.TAB_FORWARD_DAILY]
+    except gspread.exceptions.APIError as e:
+        (st.info(QUOTA_MSG) if _is_quota(e) else st.error(f"שגיאת קריאה מה-Sheet: {e}"))
+        st.stop()
+    except Exception as e:
+        st.error(f"שגיאת קריאה מה-Sheet: {e}")
+        st.stop()
+
+    if watch.empty:
+        st.warning("watchlist_live ריק — עדיין לא נאספו נתונים.")
+        st.stop()
+    watch = coalesce_kind(watch)
+    watch = watch[watch["drop_kind"] == kind].copy()        # the page IS the strata filter
+    if "drop_kind" in fdaily.columns:
+        fdaily = fdaily[fdaily["drop_kind"] == kind].copy()
+    if watch.empty:
+        st.info("אין אירועים בסטרטה זו עדיין.")
+        st.stop()
+
+    events = watch.drop_duplicates(["scan_date", "ticker"]).copy()
+    cur = current_pct_from_entry(events, fdaily)
+    disp = events.merge(cur, on=["scan_date", "ticker"], how="left")
+
+    # ── 1) per-event table (CURRENT STATUS, not an outcome) ──────────────────
+    st.subheader("📋 אירועים — מדדי כניסה + שינוי נוכחי מהכניסה")
+    st.caption("⚠️ סטטוס נוכחי — החלון עוד מבשיל, הסימן יכול להתהפך. זו אינה תוצאה. "
+               "מקור ה-% מתויג לכל שורה: 📅 forward_daily (יום אחרון בחלון) או 🟢 live "
+               "(מחיר נוכחי מול מחיר-הכניסה) — one-source-per-datum.")
+    cols = ["scan_date", "ticker", "source", "sector", "market_cap_category",
+            "market_regime", "rsi_14", "atr_pct", "dist_sma50", "dist_sma200",
+            "drop_day_rel_volume", "pct_from_entry", "pct_source"]
+    d = disp[[c for c in cols if c in disp.columns]].copy()
+    if "pct_from_entry" in d.columns:
+        d["שינוי נוכחי %"] = _signed_pct_str(d["pct_from_entry"])
+        d = d.drop(columns=["pct_from_entry"])
+    d = d.rename(columns={"pct_source": "מקור-%"})
+    show_table(d.sort_values("scan_date", ascending=False), height=560)
+
+    # ── 2) collection status ─────────────────────────────────────────────────
+    st.subheader("📈 סטטוס איסוף")
+    cum, total, by_source = collection_progress(events)
+    completed = count_completed(fdaily)
+    pct_done = round(100 * completed / ENTRY_PROFILE_TARGET) if ENTRY_PROFILE_TARGET else 0
+    c = st.columns(3)
+    kpi(c[0], "נאספו (אירועים)", total)
+    kpi(c[1], f"הושלמו (חלון בשל ≥D+{config.POST_ANALYSIS_HORIZON})", completed)
+    kpi(c[2], f"התקדמות ליעד ~{ENTRY_PROFILE_TARGET} (הושלמו)", f"{pct_done}%")
+    st.caption("היעד (~200, M3) נמדד באירועים שהושלמו — חלון בשל. 'נאספו' אינו 'הושלם'.")
+    if not cum.empty:
+        # collected-over-time only (no target line — target is COMPLETED, not collected)
+        plot(st, px.line(cum, x="scan_date", y="cum_n", markers=True,
+                         title="הצטברות אירועים שנאספו לאורך זמן"))
+    if by_source:
+        bs = pd.DataFrame([{"source": k, "count": v} for k, v in sorted(by_source.items())])
+        plot(st, px.bar(bs, x="source", y="count", title="פילוח לפי מקור"))
+
+    # ── 3) coverage (%-filled) ───────────────────────────────────────────────
+    dist = metric_distributions(disp, ENTRY_PROFILE_METRICS)
+    st.subheader("🧮 כיסוי — %מולא לכל מדד")
+    st.caption("ריק ב-dist_sma200 / dist_sma50 = young listing לגיטימי "
+               "(פחות מ-200 / 50 ברי-מסחר). שקיפות, לא שער חוסם.")
+    show_table(dist[["metric", "n_filled", "pct_filled"]], rename=None)
+
+    # ── 4) pooled per-metric distribution (NOT split up/down) ────────────────
+    st.subheader("📊 התפלגות תיאורית לכל מדד")
+    st.caption("חציון · IQR (Q1–Q3) · מין–מקס, על כלל אירועי הסטרטה (pooled). "
+               "תיאורי בלבד — ללא פיצול, ללא דירוג, ללא רפים.")
+    show_table(dist[["metric", "median", "q1", "q3", "iqr", "vmin", "vmax"]], rename=None)

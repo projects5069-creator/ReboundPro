@@ -15,9 +15,10 @@ totals, then "pick a page in the sidebar".
 Run locally:  streamlit run dashboard.py
 Streamlit Cloud entrypoint stays dashboard.py; pages/ is auto-discovered.
 """
-# Streamlit Cloud redeploy marker — 2026-06-22a (live status-banner refresh:
-# render_health_banner wrapped in st.fragment(run_every="300s"); CACHE_TTL 900→300
-# so the banner pulls health_log data <=5 min old). Bump to force a clean reboot.
+# Streamlit Cloud redeploy marker — 2026-06-24a (new DESCRIPTIVE Entry-Profile pages
+# 6/7 — per-strata entry metrics + current change-from-entry, collection status,
+# coverage, pooled distributions; M5-safe. atr_pct/dist_sma50/dist_sma200 now
+# collected). Bump to force a clean reboot.
 import gspread
 import streamlit as st
 
