@@ -134,6 +134,15 @@ def build(row, scan_date, spy_chg, now, existing):
     etf = config.SECTOR_ETF.get(sector)
     sec_chg = sc.etf_change(etf, scan_date) if etf else None
 
+    # descriptive SMA / vol-normalized features (M5-safe). `prior` = daily bars
+    # strictly before scan_date — the SAME uniform window as the EOD/gradual scanners
+    # (see sc.sma()). atr_14 computed inline so atr_pct has same-row provenance.
+    # HISTORY_DAYS_FETCH=400 → SMA200 (hence dist_sma200) is computable here too.
+    _atr = sc.atr_14(prior)
+    _atr_pct = sc.atr_pct(_atr, last)
+    _dist50 = sc.dist_from_sma(last, sc.sma(prior, 50))
+    _dist200 = sc.dist_from_sma(last, sc.sma(prior, 200))
+
     snap = {
         "scan_date": str(scan_date), "ticker": ticker, "exchange": row.get("_exchange", ""),
         "company_name": row.get("Company", ""), "sector": sector,
@@ -157,6 +166,8 @@ def build(row, scan_date, spy_chg, now, existing):
         "recovery_from_low_pct": recovery, "reversal_confirmed": reversal,
         "scans_count": scans, "last_update_at": now,
         "drop_kind": "intraday_drop",
+        "atr_14": _atr,
+        "atr_pct": _atr_pct, "dist_sma50": _dist50, "dist_sma200": _dist200,
     }
     return snap, "ok"
 

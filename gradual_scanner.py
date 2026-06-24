@@ -182,6 +182,11 @@ def build_snapshot(row, scan_date, ref_date, spy_chg, vix, now):
     drop_day_rel_vol = round(vol / avg_vol_20, 2) if avg_vol_20 else ""
 
     _atr = sc.atr_14(h)   # Wilder ATR(14)$ as-of scan_date — single ATR source
+    # descriptive SMA / vol-normalized features (M5-safe). SMA over `prior` (bars
+    # strictly before scan_date) — uniform window across all sources (see sc.sma()).
+    _atr_pct = sc.atr_pct(_atr, cl)
+    _dist50 = sc.dist_from_sma(cl, sc.sma(prior, 50))
+    _dist200 = sc.dist_from_sma(cl, sc.sma(prior, 200))
     snap = {
         "scan_date": str(scan_date), "ticker": ticker, "exchange": row.get("_exchange", ""),
         "company_name": row.get("Company", ""), "sector": sector,
@@ -201,6 +206,7 @@ def build_snapshot(row, scan_date, ref_date, spy_chg, vix, now):
         # (the WINDOW decline), matching this drop_kind — NOT open-intraday_low.
         "atr_14": _atr,
         "drop_in_atr": sc.drop_in_atr(ref_close - cl, _atr),
+        "atr_pct": _atr_pct, "dist_sma50": _dist50, "dist_sma200": _dist200,
         "spy_change_pct": spy_chg, "sector_etf": etf or "",
         "sector_etf_change_pct": sec_chg, "market_regime": sc.market_regime(spy_chg),
         "drop_type": sc.classify_drop_type(spy_chg, sec_chg), "scanned_at": now,

@@ -98,6 +98,40 @@ def drop_in_atr(drop_dollars, atr):
     return round(drop_dollars / atr, 2)
 
 
+def sma(h: pd.DataFrame, n: int):
+    """Simple moving average of the LAST n closes of the passed frame (scalar-or-
+    None, rounded). Requires >= n bars (else None). DESCRIPTIVE feature only —
+    never a signal/threshold (M5 boundary).
+
+    WINDOW CONVENTION (uniform across all 3 scanners + backfill): callers MUST pass
+    the `prior` frame — the closed daily bars STRICTLY BEFORE scan_date (i.e.
+    EXCLUDING scan_date's own close). This keeps dist_sma50/200 measured against an
+    identical N-bar window for source=intraday and source=eod_close; otherwise the
+    same metric in the same strata would be computed against a day-shifted window
+    between sources, and since source correlates with outcome that is a small
+    systematic bias."""
+    if h is None or len(h) < n:
+        return None
+    v = float(h["Close"].tail(n).mean())
+    return round(v, 2) if v == v else None
+
+
+def dist_from_sma(close, sma_val):
+    """% distance of close from an SMA: (close - sma)/sma * 100 (scalar-or-None,
+    rounded). DESCRIPTIVE feature only — never a signal."""
+    if close is None or sma_val is None or not sma_val:
+        return None
+    return round((close - sma_val) / sma_val * 100, 2)
+
+
+def atr_pct(atr, close):
+    """ATR(14) as % of close: atr/close * 100 (scalar-or-None, rounded).
+    DESCRIPTIVE feature only — never a signal."""
+    if atr is None or close is None or not close:
+        return None
+    return round(atr / close * 100, 2)
+
+
 def prior_context(h, prior, cl):
     """DESCRIPTIVE prior-decline context at capture — collection only, NOT a signal.
 
@@ -294,6 +328,11 @@ def build_snapshot(row, scan_date, spy_chg, vix, now_et):
     drop_day_rel_vol = round(vol / avg_vol_20, 2) if avg_vol_20 else ""
 
     atr = atr_14(h)   # Wilder ATR(14)$ as-of scan_date — single ATR source for this row
+    # descriptive SMA / vol-normalized features (M5-safe). SMA over `prior` (bars
+    # strictly before scan_date) — uniform window across all sources (see sma()).
+    _atr_pct = atr_pct(atr, cl)
+    _dist50 = dist_from_sma(cl, sma(prior, 50))
+    _dist200 = dist_from_sma(cl, sma(prior, 200))
     snap = {
         "scan_date": str(scan_date), "ticker": ticker, "exchange": row.get("_exchange", ""),
         "company_name": row.get("Company", ""), "sector": sector,
@@ -313,6 +352,7 @@ def build_snapshot(row, scan_date, spy_chg, vix, now_et):
         # the (scan_date,ticker) upsert overwrites in place each run.
         "atr_14": atr,
         "drop_in_atr": drop_in_atr(o - lo, atr),
+        "atr_pct": _atr_pct, "dist_sma50": _dist50, "dist_sma200": _dist200,
         "spy_change_pct": spy_chg, "sector_etf": etf or "",
         "sector_etf_change_pct": sec_chg, "market_regime": market_regime(spy_chg),
         "drop_type": classify_drop_type(spy_chg, sec_chg),
@@ -625,6 +665,109 @@ def backfill_atr(dry_run=False):
         sm.upsert_by_key(config.SHEET_ID, config.TAB_WATCHLIST, HEADER, out,
                          ["scan_date", "ticker"])
     return out, len(targets)
+
+
+def _split_halt_keys():
+    """Set of (scan_date, ticker) flagged split_halt_flag in post_analysis (these
+    are excluded from the entry-profile analysis; their split-adjusted history would
+    bias the SMA)."""
+    import sheets_manager as sm
+    try:
+        ph, pd_rows = sm.read_rows(config.SHEET_ID, config.TAB_POST)
+    except Exception:
+        return set()
+    if not pd_rows:
+        return set()
+    pidx = {c: i for i, c in enumerate(ph)}
+    if "split_halt_flag" not in pidx:
+        return set()
+
+    def c(r, name):
+        return r[pidx[name]] if name in pidx and pidx[name] < len(r) else ""
+
+    return {(c(r, "scan_date"), c(r, "ticker")) for r in pd_rows
+            if str(c(r, "split_halt_flag")).strip().lower() in ("true", "1", "yes")}
+
+
+def backfill_sma_metrics(dry_run=False):
+    """ONE-TIME backfill: fill atr_pct, dist_sma50, dist_sma200 for watchlist_live
+    rows missing any of them. point-in-time per scan_date (history <= scan_date; SMA
+    over the `prior` window strictly before scan_date — the SAME uniform window as
+    the live scanners). atr_pct gets FULL COVERAGE: if the stored atr_14 is blank
+    (old source=intraday rows), atr_14 is RECOMPUTED from `prior` (free — the history
+    is already fetched for the SMAs) and atr_pct derived from it, so atr_pct is not
+    missing exactly on the intraday rows. split_halt_flag events are SKIPPED. Partial
+    merge-safe upsert by (scan_date,ticker) — no other field overwritten. NOT in the
+    daily workflow. DESCRIPTIVE — M5 safe. Returns (computed_rows, n_targets, counts)."""
+    import sheets_manager as sm
+    wh, wd = sm.read_rows(config.SHEET_ID, config.TAB_WATCHLIST)
+    if not wd:
+        log.info("watchlist_live empty — nothing to backfill.")
+        return [], 0, {}
+    idx = {c: i for i, c in enumerate(wh)}
+    if not all(k in idx for k in ("scan_date", "ticker")):
+        log.error("watchlist_live missing scan_date/ticker columns.")
+        return [], 0, {}
+
+    def cell(r, c):
+        return r[idx[c]] if c in idx and idx[c] < len(r) else ""
+
+    contaminated = _split_halt_keys()
+    n_skipped = 0
+    targets = []
+    for r in wd:
+        sd_s, tk = cell(r, "scan_date"), cell(r, "ticker")
+        if not sd_s or not tk:
+            continue
+        if (sd_s, tk) in contaminated:
+            n_skipped += 1
+            continue
+        if not cell(r, "atr_pct") or not cell(r, "dist_sma50") or not cell(r, "dist_sma200"):
+            targets.append(r)
+    log.info("SMA backfill: %d/%d rows missing >=1 of (atr_pct, dist_sma50, dist_sma200); "
+             "%d split_halt skipped.", len(targets), len(wd), n_skipped)
+
+    metrics = ("atr_pct", "dist_sma50", "dist_sma200")
+    counts = {m: {} for m in metrics}
+    counts["split_halt_skipped"] = n_skipped
+
+    out = []
+    for r in targets:
+        tk, sd_s, src = cell(r, "ticker"), cell(r, "scan_date"), (cell(r, "source") or "?")
+        try:
+            sd = datetime.strptime(sd_s, "%Y-%m-%d").date()
+            h = yf.Ticker(tk).history(
+                start=str(sd - timedelta(days=config.EOD_HISTORY_DAYS)),
+                end=str(sd + timedelta(days=1)), auto_adjust=True)
+            h = h[h.index.date <= sd]
+            if h.empty:
+                continue
+            prior = h[h.index.date < sd]
+            close = parse_num(cell(r, "price"))
+            if close is None:
+                today = h[h.index.date == sd]
+                close = float(today["Close"].iloc[-1]) if not today.empty else None
+            # atr_pct full coverage: existing atr_14 if present, else recompute from prior
+            atr = parse_num(cell(r, "atr_14"))
+            if atr is None:
+                atr = atr_14(prior)
+            row = {"scan_date": sd_s, "ticker": tk,
+                   "atr_pct": atr_pct(atr, close),
+                   "dist_sma50": dist_from_sma(close, sma(prior, 50)),
+                   "dist_sma200": dist_from_sma(close, sma(prior, 200))}
+            out.append(row)
+            for m in metrics:
+                if row[m] is not None:
+                    counts[m][src] = counts[m].get(src, 0) + 1
+        except Exception as e:
+            log.warning("backfill_sma %s failed: %s", tk, e)
+        time.sleep(config.RATE_LIMIT_SLEEP)
+
+    if out and not dry_run:
+        upd, ins, tot = sm.upsert_by_key(config.SHEET_ID, config.TAB_WATCHLIST, HEADER,
+                                         out, ["scan_date", "ticker"])
+        log.info("SMA backfill written: %d rows updated (tab total %d).", upd, tot)
+    return out, len(targets), counts
 
 
 def main():

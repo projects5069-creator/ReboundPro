@@ -258,6 +258,13 @@ WATCHLIST_HEADER = [
     # drop_kind (intraday: open-intraday_low ; gradual: ref_close_window-close).
     "atr_14",
     "drop_in_atr",
+    # descriptive SMA / vol-normalized features (M5-safe; APPEND ONLY). Pre-registered
+    # confirmatory predictors (research/entry_profile/ENTRY_PROFILE_memo.md), NOT signals.
+    # atr_pct = atr_14/close*100 ; dist_smaN = (close - SMAN)/SMAN*100, point-in-time.
+    # dist_sma200 is "" only when a ticker has <200 trading bars (young listing).
+    "atr_pct",
+    "dist_sma50",
+    "dist_sma200",
 ]
 CREDS_PATH = os.path.join(os.path.dirname(__file__), "google_credentials.json")
 
@@ -273,7 +280,11 @@ RISK_OFF_SPY_PCT = -1.0              # SPY day move ≤ this → "risk_off" regi
 
 # ── Misc ─────────────────────────────────────────────────────────────────────
 RATE_LIMIT_SLEEP = 0.30             # seconds between per-ticker yfinance calls
-HISTORY_DAYS_FETCH = 90             # calendar days pulled per candidate (ADV/RSI) — intraday
+HISTORY_DAYS_FETCH = 400            # calendar days pulled per candidate — intraday daily_hist.
+#   400 cal ≈ 275 trading days → SMA200 computable for source=intraday too (90 cal ≈ 63
+#   trading days could only do SMA50). Downstream consumers use tails/last (prev_close,
+#   avg_volume tail(20), rsi_14 last-14) → unaffected by the longer window. ≈0 extra
+#   rate-limit (still 1 history() call + 0.30s sleep per ticker; only a larger payload).
 # EOD scanners pull a longer single history window (same one call, no extra calls)
 # so they can compute the 52-week range + the 60-trading-day prior-decline context.
 # 400 calendar days ≈ 275 trading sessions > 252 (52 weeks) + 60-session buffer.
