@@ -108,6 +108,10 @@ NUM_SUMMARY = ["total_finviz_candidates", "passed_floor", "below_min_price",
 NUM_TS = ["price", "pct_from_open", "volume"]
 NUM_FDAILY = ["day_offset", "close", "cum_pct_from_ref", "daily_change_pct",
               "high_pct", "low_pct"]
+# Group-C fundamentals — the locked pre-reg _num fields (+ P/E for derived E/P) read
+# from fundamentals_snapshot (sha256 032f10eb...). Display/data only — no scoring (M5).
+NUM_FUND = ["ROA_num", "Debt/Eq_num", "Current Ratio_num", "Short Float_num",
+            "Gross Margin_num", "P/B_num", "P/E_num"]
 
 # ── cross-tab display formatting ─────────────────────────────────────────────
 # % sign in the cell · thousands separators · 2-decimal rounding (pandas Styler,
@@ -1869,7 +1873,39 @@ ENTRY_PROFILE_METRICS = [
     "pct_from_52w_high", "pct_from_52w_low", "prior_decline_20d_pct",
     "prior_decline_60d_pct", "vix_level", "sector_momentum_5d", "sector_momentum_20d",
     "spy_change_pct", "sector_etf_change_pct", "market_cap", "adv_dollar",
+    # Group-C fundamentals (locked pre-reg 032f10eb; each read per-metric — NO composite).
+    "ROA_num", "Debt/Eq_num", "Current Ratio_num", "Short Float_num",
+    "Gross Margin_num", "P/B_num", "E/P_num",
 ]
+
+# The 6 locked Finviz _num fields fed directly (+ derived E/P_num). Pre-registered set.
+GROUP_C_FIELDS = ["ROA_num", "Debt/Eq_num", "Current Ratio_num", "Short Float_num",
+                  "Gross Margin_num", "P/B_num"]
+
+
+def join_fundamentals(events, fund):
+    """LEFT-join the locked Group-C fundamental _num fields (+ derived E/P_num) from
+    fundamentals_snapshot onto `events` by (scan_date,ticker). Pre-registered set ONLY
+    (sha256 032f10eb...). Safe join: deduped 1:1 (no row duplication), never overwrites
+    an existing events column, missing snapshot → NaN (treated like any blank in the
+    table). DISPLAY/DATA only — no scoring / no composite (M5)."""
+    out = events.copy()
+    need = GROUP_C_FIELDS + ["P/E_num"]
+    if fund is None or fund.empty or not {"scan_date", "ticker"} <= set(fund.columns):
+        f = pd.DataFrame({"scan_date": pd.Series(dtype=str), "ticker": pd.Series(dtype=str)})
+        for c in need:
+            f[c] = pd.Series(dtype=float)
+    else:
+        f = (fund.drop_duplicates(["scan_date", "ticker"])
+             [["scan_date", "ticker"] + [c for c in need if c in fund.columns]].copy())
+        for c in need:
+            f[c] = pd.to_numeric(f[c], errors="coerce") if c in f.columns else np.nan
+    # derived E/P (earnings yield %); guard negative/zero P/E → NaN (not infinity)
+    pe_pos = pd.to_numeric(f["P/E_num"], errors="coerce").where(lambda s: s > 0)
+    f["E/P_num"] = 100.0 / pe_pos
+    f = f.drop(columns=["P/E_num"])
+    add = [c for c in (GROUP_C_FIELDS + ["E/P_num"]) if c not in out.columns]  # never overwrite
+    return out.merge(f[["scan_date", "ticker"] + add], on=["scan_date", "ticker"], how="left")
 
 
 def _signed_pct_str(series):
@@ -1887,11 +1923,15 @@ METRIC_UNITS = {
         "drop_pct_window", "atr_pct", "dist_sma50", "dist_sma200",
         "pct_from_52w_high", "pct_from_52w_low", "prior_decline_20d_pct",
         "prior_decline_60d_pct", "sector_momentum_5d", "sector_momentum_20d",
-        "spy_change_pct", "sector_etf_change_pct")},
+        "spy_change_pct", "sector_etf_change_pct",
+        # Group-C %-valued fundamentals (Finviz parse strips %, keeps magnitude)
+        "ROA_num", "Short Float_num", "Gross Margin_num", "E/P_num")},
     **{m: "dollar" for m in ("market_cap", "adv_dollar")},
     **{m: "plain" for m in (
         "rsi_14", "vix_level", "atr_14", "volume_ratio", "drop_day_rel_volume",
-        "drop_in_atr")},
+        "drop_in_atr",
+        # Group-C ratio fundamentals (plain)
+        "Debt/Eq_num", "Current Ratio_num", "P/B_num")},
 }
 
 
@@ -1995,8 +2035,10 @@ def render_entry_profile(kind):
     sidebar_controls(sheet_id)
     try:
         data = load_many(sheet_id, {config.TAB_WATCHLIST: NUM_WATCH,
-                                    config.TAB_FORWARD_DAILY: NUM_FDAILY})
+                                    config.TAB_FORWARD_DAILY: NUM_FDAILY,
+                                    config.TAB_FUNDAMENTALS: NUM_FUND})
         watch, fdaily = data[config.TAB_WATCHLIST], data[config.TAB_FORWARD_DAILY]
+        fund = data[config.TAB_FUNDAMENTALS]
     except gspread.exceptions.APIError as e:
         (st.info(QUOTA_MSG) if _is_quota(e) else st.error(f"שגיאת קריאה מה-Sheet: {e}"))
         st.stop()
@@ -2016,6 +2058,7 @@ def render_entry_profile(kind):
         st.stop()
 
     events = watch.drop_duplicates(["scan_date", "ticker"]).copy()
+    events = join_fundamentals(events, fund)                 # Group-C: locked _num fields → events (point-in-time D0)
     cur = current_pct_from_entry(events, fdaily)
     disp = events.merge(cur, on=["scan_date", "ticker"], how="left")  # current-status (reference table only)
 

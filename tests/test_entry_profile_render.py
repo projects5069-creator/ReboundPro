@@ -13,7 +13,8 @@ import dashboard_common as common
 # Cliff's delta / top-10 / up-down separation are ALLOWED (descriptive). Forbidden =
 # only terms implying a decision.
 FORBIDDEN = ["buy", "sell", "קנה", "מכור", "recommend", "המלצה",
-             "ציון מאוחד", "unified score", "entry rule", "כלל כניסה", "כדאי לקנות"]
+             "ציון מאוחד", "unified score", "entry rule", "כלל כניסה", "כדאי לקנות",
+             "ציון איכות", "quality score", "composite score", "fundamental score"]
 
 
 def _patch(monkeypatch):
@@ -33,10 +34,19 @@ def _patch(monkeypatch):
             rows.append({"scan_date": "2026-06-12", "ticker": f"T{i}", "day_offset": k,
                          "cum_pct_from_ref": cum, "date": dt, "drop_kind": "intraday_drop"})
     fdaily = pd.DataFrame(rows)
+    # Group-C fundamentals snapshot for the events (point-in-time D0): up-group higher ROA
+    fund = pd.DataFrame([{
+        "scan_date": "2026-06-12", "ticker": f"T{i}",
+        "ROA_num": (8.0 if i < 6 else 2.0), "Debt/Eq_num": (0.5 if i < 6 else 2.5),
+        "Current Ratio_num": (2.5 if i < 6 else 1.0), "Short Float_num": (3.0 if i < 6 else 12.0),
+        "Gross Margin_num": (45.0 if i < 6 else 20.0), "P/B_num": (2.0 if i < 6 else 1.0),
+        "P/E_num": (18.0 if i < 6 else -5.0),
+    } for i in range(12)])
     monkeypatch.setattr(common, "resolve_sheet_id", lambda: "TEST")
     monkeypatch.setattr(common, "sidebar_controls", lambda sid: None)
     monkeypatch.setattr(common, "load_many", lambda sid, specs: {
-        config.TAB_WATCHLIST: watch, config.TAB_FORWARD_DAILY: fdaily})
+        config.TAB_WATCHLIST: watch, config.TAB_FORWARD_DAILY: fdaily,
+        config.TAB_FUNDAMENTALS: fund})
 
 
 def _rendered_text(at):
