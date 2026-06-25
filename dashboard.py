@@ -15,11 +15,13 @@ totals, then "pick a page in the sidebar".
 Run locally:  streamlit run dashboard.py
 Streamlit Cloud entrypoint stays dashboard.py; pages/ is auto-discovered.
 """
-# Streamlit Cloud redeploy marker — 2026-06-24b (Entry-Profile pages 6/7 reshaped to
-# Finviz-style metric SEPARATION tables: per-metric median-up/median-down + Cliff's
-# delta, soft direction tint + bold/accent only for metrics crossing the family-wise
-# (K=1000) permutation noise band; top-10 by |delta|; charts removed, KPIs as numbers,
-# old stock table → expander. DESCRIPTIVE / M5-safe). Bump to force a clean reboot.
+# Streamlit Cloud redeploy marker — 2026-06-25a (Entry-Profile 6/7: split moved to a
+# FIXED horizon D+3 — same age per event, removes the current-status age confound;
+# honest per-horizon n + min-n gate (thin → greyed, delta dimmed); SPY-excess split
+# toggle (read-only); unit-aware value formatting (%/$/plain) across all tables; and
+# a multi-horizon delta strip D+3/5/7/10/15/20 (arrow + Cliff's delta per cell, bold
+# only when crossing the family-wise band within that horizon). DESCRIPTIVE / M5-safe).
+# Bump to force a clean reboot.
 import gspread
 import streamlit as st
 

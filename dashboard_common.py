@@ -717,6 +717,98 @@ def top_separation(table, n=10):
             .drop(columns="_abs").head(n).reset_index(drop=True))
 
 
+# ── fixed-horizon split engine (removes the age confound; B-ready via day_offset) ─
+# All three feed the EXISTING build_separation_table via its pct_col argument — no
+# new stats math. Splitting at a FIXED forward day (same age for every event) instead
+# of the current change-from-entry is what removes the immortal-time confound.
+def fixed_horizon_outcome(fdaily, day_offset):
+    """cum_pct_from_ref at EXACTLY day_offset==k per event (point-in-time). Events
+    that did not reach D+k are ABSENT (never imputed / last-available). Series indexed
+    by (scan_date, ticker)."""
+    need = {"scan_date", "ticker", "day_offset", "cum_pct_from_ref"}
+    if fdaily is None or fdaily.empty or not need <= set(fdaily.columns):
+        return pd.Series(dtype=float)
+    f = fdaily.assign(_o=pd.to_numeric(fdaily["day_offset"], errors="coerce"))
+    sel = f[f["_o"] == day_offset].drop_duplicates(["scan_date", "ticker"])
+    s = pd.to_numeric(sel["cum_pct_from_ref"], errors="coerce")
+    s.index = pd.MultiIndex.from_arrays(
+        [sel["scan_date"].astype(str), sel["ticker"].astype(str)], names=["scan_date", "ticker"])
+    return s.dropna()
+
+
+def spy_excess_outcome(fdaily, day_offset, spy_closes):
+    """Fixed-horizon raw cum MINUS SPY's return over scan_date → the D+k date (nets out
+    market beta). `spy_closes`: {YYYY-MM-DD: close}. NaN where SPY is unavailable for
+    either date. Series indexed by (scan_date, ticker) over events that reached D+k."""
+    need = {"scan_date", "ticker", "day_offset", "cum_pct_from_ref", "date"}
+    if fdaily is None or fdaily.empty or not need <= set(fdaily.columns):
+        return pd.Series(dtype=float)
+    f = fdaily.assign(_o=pd.to_numeric(fdaily["day_offset"], errors="coerce"))
+    sel = f[f["_o"] == day_offset].drop_duplicates(["scan_date", "ticker"]).copy()
+    sd = sel["scan_date"].astype(str)
+    dk = sel["date"].astype(str).str.slice(0, 10)
+    spy_cum = (pd.to_numeric(dk.map(spy_closes), errors="coerce")
+               / pd.to_numeric(sd.map(spy_closes), errors="coerce") - 1.0) * 100.0
+    excess = pd.to_numeric(sel["cum_pct_from_ref"], errors="coerce").to_numpy() - spy_cum.to_numpy()
+    return pd.Series(excess, index=pd.MultiIndex.from_arrays(
+        [sd, sel["ticker"].astype(str)], names=["scan_date", "ticker"]))
+
+
+def horizon_split_counts(outcome):
+    """Honest per-horizon counts: {n_reached (non-NaN), n_up (>0), n_down (<=0)}."""
+    s = pd.Series(outcome, dtype=float)
+    up, down = split_groups(s.to_numpy())
+    return {"n_reached": int(s.notna().sum()), "n_up": int(up.sum()), "n_down": int(down.sum())}
+
+
+def horizon_strip(events, fdaily, metrics, horizons, k=1000, min_n=None):
+    """Multi-horizon delta strip (B). Per (metric, horizon): Cliff's delta +
+    direction + crosses (family-wise WITHIN that horizon) + ok (the horizon is
+    well-powered — n>=min_n each side — AND the metric is non-empty there). Reuses
+    fixed_horizon_outcome + build_separation_table — NO new stats math. No
+    cross-horizon multiplicity correction (horizons are autocorrelated → consistency
+    is read descriptively, not inferentially). Returns (long_df[metric,horizon,delta,
+    direction,crosses,ok], meta[h]->{n_reached,n_up,n_down,enough})."""
+    mn = ENTRY_PROFILE_MIN_N if min_n is None else min_n
+    rows, meta = [], {}
+    for h in horizons:
+        out = fixed_horizon_outcome(fdaily, h)
+        cnt = horizon_split_counts(out)
+        enough = cnt["n_reached"] > 0 and cnt["n_up"] >= mn and cnt["n_down"] >= mn
+        meta[h] = {**cnt, "enough": enough}
+        ev_h = events.merge(out.rename("pct_k").reset_index(), on=["scan_date", "ticker"], how="left")
+        by = build_separation_table(ev_h, metrics, pct_col="pct_k", k=k).set_index("metric")
+        for m in metrics:
+            delta = float(by.loc[m, "delta"]) if m in by.index else float("nan")
+            direction = by.loc[m, "direction"] if m in by.index else "▬"
+            crosses = bool(by.loc[m, "crosses"]) if m in by.index else False
+            ok = bool(enough and np.isfinite(delta))
+            rows.append({"metric": m, "horizon": h, "delta": delta,
+                         "direction": direction if ok else "▬",
+                         "crosses": bool(crosses and ok), "ok": ok})
+    return pd.DataFrame(rows), meta
+
+
+@st.cache_data(ttl=3600, show_spinner=False)
+def _spy_closes_cached(date_min, date_max):
+    """READ-ONLY SPY daily closes {YYYY-MM-DD: close} for the SPY-excess split. Cached
+    1h; returns {} on any failure (the page then falls back to the raw split)."""
+    try:
+        import yfinance as yf
+        hi = (pd.Timestamp(date_max) + pd.Timedelta(days=5)).strftime("%Y-%m-%d")
+        h = yf.Ticker("SPY").history(start=date_min, end=hi, auto_adjust=False)
+        return {ts.strftime("%Y-%m-%d"): float(c) for ts, c in h["Close"].items()}
+    except Exception:
+        return {}
+
+
+def _spy_closes_for(fdaily, events):
+    ds = pd.concat([events.get("scan_date", pd.Series(dtype=str)).astype(str),
+                    fdaily.get("date", pd.Series(dtype=str)).astype(str).str.slice(0, 10)])
+    ds = sorted({d for d in ds if d and d != "nan"})
+    return _spy_closes_cached(ds[0], ds[-1]) if ds else {}
+
+
 def sidebar_controls(sheet_id):
     with st.sidebar:
         st.header("⚙️ Controls")
@@ -1759,10 +1851,14 @@ def render_system_health(sheet_id=None):
 
 
 # ── Entry-Profile pages (DESCRIPTIVE / M5-safe) ──────────────────────────────
-# Per-strata view of entry conditions + current change-from-entry. View-only.
-# DELIBERATELY NOT HERE (M5): scores, signals, ranking, separating thresholds,
-# effect sizes (Cliff's delta), salient/top-N, or up-vs-down split distributions.
+# Per-strata DESCRIPTIVE separation tables: up/down split at a FIXED forward horizon
+# (D+headline) — same age for every event, which removes the immortal-time confound
+# of splitting on the *current* change-from-entry. View-only. DELIBERATELY NOT HERE
+# (M5): a unified score, an entry rule, buy/sell, or a recommendation.
 ENTRY_PROFILE_TARGET = 200
+ENTRY_PROFILE_HEADLINE_DAY = 3      # pre-registered headline horizon (ENTRY_PROFILE_memo)
+ENTRY_PROFILE_MIN_N = 5             # min per-side n to colour/bold a horizon's split
+ENTRY_PROFILE_HORIZONS = [3, 5, 7, 10, 15, 20]   # the multi-horizon delta strip (B)
 _ENTRY_PROFILE_TITLES = {"intraday_drop": "🔬 פרופיל כניסה — ⚡ Intraday",
                          "gradual_drop": "🔬 פרופיל כניסה — 🐢 Gradual"}
 # numeric entry metrics profiled (header order; no ordering implies importance)
@@ -1782,6 +1878,60 @@ def _signed_pct_str(series):
                  else (f"🔴 {v:+.2f}%" if pd.notna(v) else "—"))
 
 
+# ── unit-aware per-metric display formatting (display-only; M5-safe) ──────────
+# One unit per metric so every Entry-Profile table renders values consistently:
+# percent (%), dollar (abbreviated B/M/K with $), or plain (no suffix).
+METRIC_UNITS = {
+    **{m: "pct" for m in (
+        "drop_pct_from_open", "close_pct_from_open", "pct_change_prevclose",
+        "drop_pct_window", "atr_pct", "dist_sma50", "dist_sma200",
+        "pct_from_52w_high", "pct_from_52w_low", "prior_decline_20d_pct",
+        "prior_decline_60d_pct", "sector_momentum_5d", "sector_momentum_20d",
+        "spy_change_pct", "sector_etf_change_pct")},
+    **{m: "dollar" for m in ("market_cap", "adv_dollar")},
+    **{m: "plain" for m in (
+        "rsi_14", "vix_level", "atr_14", "volume_ratio", "drop_day_rel_volume",
+        "drop_in_atr")},
+}
+
+
+def _fmt_dollar(x):
+    a = abs(x)
+    if a >= 1e9:
+        return f"${x / 1e9:.2f}B"
+    if a >= 1e6:
+        return f"${x / 1e6:.1f}M"
+    if a >= 1e3:
+        return f"${x / 1e3:.1f}K"
+    return f"${x:.0f}"
+
+
+def fmt_metric_value(metric, v):
+    """One value → display string by the metric's unit (pct / dollar / plain).
+    NaN/blank/non-numeric → '—'. Unknown metric → plain."""
+    try:
+        x = float(v)
+    except (TypeError, ValueError):
+        return "—"
+    if x != x:                                  # NaN
+        return "—"
+    unit = METRIC_UNITS.get(metric, "plain")
+    if unit == "pct":
+        return f"{x:,.2f}%"
+    if unit == "dollar":
+        return _fmt_dollar(x)
+    return f"{x:,.2f}"
+
+
+def fmt_metric_table(df, value_cols, metric_col="metric"):
+    """Copy of df with `value_cols` rendered as strings per EACH ROW's metric unit
+    (rows are metrics; same column can hold %, $, and plain across rows)."""
+    out = df.copy()
+    for c in value_cols:
+        out[c] = [fmt_metric_value(m, v) for m, v in zip(out[metric_col], out[c])]
+    return out
+
+
 def _sep_row_style(row):
     """Row styling for the separation table. Direction = a SOFT/light Finviz-style
     tint (gentle hint only). The strong signal (fuller fill + bold + a leading-edge
@@ -1799,6 +1949,32 @@ def _sep_row_style(row):
     if cr:                                # accent only on the leading (RTL-right) cell
         styles[0] = cell + f"border-right:4px solid {accent};"
     return styles
+
+
+def _strip_cell(direction, crosses, ok, delta):
+    """One multi-horizon strip cell → (text, css). Shows the arrow AND the numeric
+    Cliff's delta (+.2f, −1..+1, NO %) in the same cell. Soft tint by direction;
+    bold fill + border only for crossers; thin/unreached (not ok) → '—' only (no
+    arrow/number). Slightly smaller font so arrow+number fit cleanly."""
+    if not ok:
+        return "—", "background-color:#f3f3f3;color:#aaaaaa;text-align:center;font-size:12px;"
+    num = f"{delta:+.2f}".replace("-", "−")
+    if direction == "🟢":
+        bg, accent, gl = ("#b7e4c7" if crosses else "#e9f7ef"), "#1e8449", "▲"
+    elif direction == "🔴":
+        bg, accent, gl = ("#f5b7b1" if crosses else "#fdecea"), "#c0392b", "▼"
+    else:
+        return f"· {num}", "background-color:#fafafa;color:#666666;text-align:center;font-size:12px;"
+    css = f"background-color:{bg};color:#111;text-align:center;font-size:12px;"
+    if crosses:
+        css += f"font-weight:700;border:2px solid {accent};"
+    return f"{gl} {num}", css
+
+
+@st.cache_data(ttl=CACHE_TTL, show_spinner=False)
+def _horizon_strip_cached(events, fdaily, metrics, horizons, k):
+    """Cached wrapper (the K-shuffle permutation per horizon is the cost)."""
+    return horizon_strip(events, fdaily, list(metrics), list(horizons), k=k)
 
 
 def render_entry_profile(kind):
@@ -1841,36 +2017,99 @@ def render_entry_profile(kind):
 
     events = watch.drop_duplicates(["scan_date", "ticker"]).copy()
     cur = current_pct_from_entry(events, fdaily)
-    disp = events.merge(cur, on=["scan_date", "ticker"], how="left")
-    sep = build_separation_table(disp, ENTRY_PROFILE_METRICS)
+    disp = events.merge(cur, on=["scan_date", "ticker"], how="left")  # current-status (reference table only)
 
-    # ── 1) MAIN — all-metrics separation table (Finviz-style, colored) ───────
-    st.subheader("🧭 טבלת הפרדה — כל המדדים")
-    st.info("**מקרא:** צבע רקע = כיוון ההפרדה (🟢 נוטה לעולים · 🔴 נוטה ליורדים) · "
-            "**מודגש = חוצה רצפת-רעש** (permutation family-wise, K=1000) · "
-            "כרגע ייתכן שאף מדד לא מודגש = עוד אין מבדיל אמיתי. "
-            "הפיצול לפי השינוי הנוכחי מהכניסה (עולה>0 / יורד≤0) — החלון מבשיל, הסימן יכול להתהפך.")
+    # ── 1) MAIN — fixed-horizon separation table (removes the age confound) ───
+    K = ENTRY_PROFILE_HEADLINE_DAY
+    st.subheader(f"🧭 טבלת הפרדה — כל המדדים · אופק קבוע D+{K}")
+    mode = st.radio(f"פיצול עולה/יורד לפי (D+{K}):", ["שינוי גולמי", "תשואה-עודפת מול SPY"],
+                    horizontal=True, key=f"ep_mode_{kind}")
+    if mode.startswith("תשואה"):
+        spy = _spy_closes_for(fdaily, events)
+        outcome = spy_excess_outcome(fdaily, K, spy)
+        if not spy:
+            st.caption("⚠️ SPY לא זמין כעת — נפילה חזרה לשינוי גולמי.")
+            outcome, mode = fixed_horizon_outcome(fdaily, K), "שינוי גולמי"
+    else:
+        outcome = fixed_horizon_outcome(fdaily, K)
+    cnt = horizon_split_counts(outcome)
+    ev_k = events.merge(outcome.rename("pct_k").reset_index(), on=["scan_date", "ticker"], how="left")
+    sep = build_separation_table(ev_k, ENTRY_PROFILE_METRICS, pct_col="pct_k")
 
-    main = sep.assign(_dir=sep["direction"], _cross=sep["crosses"])[
-        ["metric", "median_up", "median_down", "delta", "_dir", "_cross"]].rename(
-        columns={"metric": "מדד", "median_up": "חציון-עולים",
-                 "median_down": "חציון-יורדים", "delta": "Cliff's delta"})
-    main_sty = (main.style.apply(_sep_row_style, axis=1)
-                .format({"חציון-עולים": "{:,.2f}", "חציון-יורדים": "{:,.2f}",
-                         "Cliff's delta": "{:+.3f}"}, na_rep="—")
-                .hide(["_dir", "_cross"], axis="columns").hide(axis="index"))
-    show_table(main_sty, rename=None)
+    st.caption(f"פיצול לפי **{mode}** ב-D+{K} (עולה>0 / יורד≤0) · אותו גיל לכל אירוע — "
+               f"הוסר ה-confound של 'שינוי נוכחי'. n: עולים={cnt['n_up']} · יורדים={cnt['n_down']} · "
+               f"הגיעו ל-D+{K}: {cnt['n_reached']} מתוך {len(events)}.")
+    st.info("**מקרא:** צבע רקע = כיוון ההפרדה (🟢 נוטה לעולים · 🔴 נוטה ליורדים, גוון רך) · "
+            "**מודגש + מסגרת = חוצה רצפת-רעש** (permutation family-wise, K=1000) · "
+            "כרגע ייתכן שאף מדד לא מודגש = עוד אין מבדיל אמיתי.")
 
-    # ── 2) Top-10 by |delta| ─────────────────────────────────────────────────
-    st.subheader("🏅 10 הבולטים (|Cliff's delta| הגדול ביותר)")
-    topd = top_separation(sep, 10)[["metric", "median_up", "median_down",
-                                    "pct_upside_up", "pct_upside_down", "direction", "crosses"]].copy()
-    topd["crosses"] = topd["crosses"].map(lambda b: "✔ חוצה" if b else "—")
-    topd = topd.rename(columns={
-        "metric": "מדד", "median_up": "חציון-עולים", "median_down": "חציון-יורדים",
-        "pct_upside_up": "%בצד-עולים (עולים)", "pct_upside_down": "%בצד-עולים (יורדים)",
-        "direction": "כיוון", "crosses": "חוצה-רעש?"})
-    show_table(topd, rename=None)
+    enough = (cnt["n_reached"] > 0 and cnt["n_up"] >= ENTRY_PROFILE_MIN_N
+              and cnt["n_down"] >= ENTRY_PROFILE_MIN_N)
+    if not enough:
+        if cnt["n_reached"] == 0:
+            st.warning(f"אין אירועים שהגיעו ל-D+{K} עדיין — הטבלה תתמלא עם ההבשלה.")
+        else:
+            st.warning(f"⚠️ מדגם דק ב-D+{K} (עולים={cnt['n_up']}, יורדים={cnt['n_down']}; צריך "
+                       f"≥{ENTRY_PROFILE_MIN_N} בכל צד) — צבע/הדגשה מושבתים עד שיבשילו אירועים.")
+        plain = fmt_metric_table(sep, ["median_up", "median_down"])[
+            ["metric", "median_up", "median_down", "delta"]].rename(
+            columns={"metric": "מדד", "median_up": "חציון-עולים",
+                     "median_down": "חציון-יורדים", "delta": "Cliff's delta"})
+        # thin sample → DIM the delta too (grey italic), so ±1.000 isn't read as a real separator
+        plain_sty = (plain.style.format({"Cliff's delta": "{:+.3f}"}, na_rep="—")
+                     .set_properties(subset=["Cliff's delta"],
+                                     color="#999999", **{"font-style": "italic"})
+                     .hide(axis="index"))
+        show_table(plain_sty, rename=None)
+    else:
+        fmain = fmt_metric_table(sep, ["median_up", "median_down"])
+        main = fmain.assign(_dir=fmain["direction"], _cross=fmain["crosses"])[
+            ["metric", "median_up", "median_down", "delta", "_dir", "_cross"]].rename(
+            columns={"metric": "מדד", "median_up": "חציון-עולים",
+                     "median_down": "חציון-יורדים", "delta": "Cliff's delta"})
+        main_sty = (main.style.apply(_sep_row_style, axis=1)
+                    .format({"Cliff's delta": "{:+.3f}"}, na_rep="—")  # medians already unit-formatted
+                    .hide(["_dir", "_cross"], axis="columns").hide(axis="index"))
+        show_table(main_sty, rename=None)
+
+    # ── 2) Top-10 by |delta| (only when the split is well-powered) ───────────
+    st.subheader(f"🏅 10 הבולטים (|Cliff's delta| הגדול ביותר) · D+{K}")
+    if not enough:
+        st.caption(f"מדגם דק ב-D+{K} — 'הבולטים' יוצג כשיבשילו אירועים (≥{ENTRY_PROFILE_MIN_N} בכל צד).")
+    else:
+        topd = top_separation(sep, 10)[["metric", "median_up", "median_down",
+                                        "pct_upside_up", "pct_upside_down", "direction", "crosses"]].copy()
+        topd = fmt_metric_table(topd, ["median_up", "median_down"])      # medians per metric unit
+        for c in ("pct_upside_up", "pct_upside_down"):                    # always %
+            topd[c] = topd[c].map(lambda v: f"{v:.0f}%" if pd.notna(v) else "—")
+        topd["crosses"] = topd["crosses"].map(lambda b: "✔ חוצה" if b else "—")
+        topd = topd.rename(columns={
+            "metric": "מדד", "median_up": "חציון-עולים", "median_down": "חציון-יורדים",
+            "pct_upside_up": "%בצד-עולים (עולים)", "pct_upside_down": "%בצד-עולים (יורדים)",
+            "direction": "כיוון", "crosses": "חוצה-רעש?"})
+        show_table(topd, rename=None)
+
+    # ── 2.5) multi-horizon delta strip (B) ───────────────────────────────────
+    st.subheader("🎞️ רצועת-אופקים — Cliff's delta לאורך D+3/5/7/10/15/20")
+    st.caption("תא = חץ-כיוון + ערך Cliff's delta באותו אופק (▲ +0.42 / ▼ −0.55; −1..+1, לא %) · "
+               "**מסגרת+מודגש = חוצה רצפת-רעש** (family-wise *בתוך* האופק) · — = לא הבשיל / מדגם דק. "
+               "מדד עקבי לאורך האופקים = אמיתי; מרצד = רעש. ללא תיקון-ריבוי בין אופקים (תיאורי). מתמלא עם ההבשלה.")
+    strip_long, smeta = _horizon_strip_cached(
+        events, fdaily, tuple(ENTRY_PROFILE_METRICS), tuple(ENTRY_PROFILE_HORIZONS), 1000)
+    st.caption("הגיעו לאופק (n): " +
+               " · ".join(f"D+{h}={smeta[h]['n_reached']}" for h in ENTRY_PROFILE_HORIZONS))
+    lookup = {(r["metric"], r["horizon"]): r for _, r in strip_long.iterrows()}
+    gdata, cdata = [], []
+    for m in ENTRY_PROFILE_METRICS:
+        grow, crow = {"מדד": m}, {"מדד": ""}
+        for h in ENTRY_PROFILE_HORIZONS:
+            r = lookup[(m, h)]
+            txt, css = _strip_cell(r["direction"], r["crosses"], r["ok"], r["delta"])
+            grow[f"D+{h}"], crow[f"D+{h}"] = txt, css
+        gdata.append(grow)
+        cdata.append(crow)
+    gdf, cdf = pd.DataFrame(gdata), pd.DataFrame(cdata)
+    show_table(gdf.style.apply(lambda _: cdf, axis=None).hide(axis="index"), rename=None)
 
     # ── 3) collection status (numbers only — no charts) ──────────────────────
     st.subheader("📈 סטטוס איסוף")
@@ -1888,7 +2127,10 @@ def render_entry_profile(kind):
     st.subheader("🧮 כיסוי — %מולא לכל מדד")
     st.caption("ריק ב-dist_sma200 / dist_sma50 = young listing לגיטימי "
                "(פחות מ-200 / 50 ברי-מסחר). שקיפות, לא שער חוסם.")
-    cov = metric_distributions(disp, ENTRY_PROFILE_METRICS)[["metric", "n_filled", "pct_filled"]]
+    cov = metric_distributions(disp, ENTRY_PROFILE_METRICS)[["metric", "n_filled", "pct_filled"]].copy()
+    cov["n_filled"] = cov["n_filled"].map(lambda v: f"{int(v)}" if pd.notna(v) else "—")
+    cov["pct_filled"] = cov["pct_filled"].map(lambda v: f"{v:.1f}%" if pd.notna(v) else "—")
+    cov = cov.rename(columns={"metric": "מדד", "n_filled": "מולא (n)", "pct_filled": "%מולא"})
     show_table(cov, rename=None)
 
     # ── 5) reference per-event table (compact, in an expander) ───────────────
@@ -1899,6 +2141,9 @@ def render_entry_profile(kind):
                 "market_regime", "rsi_14", "atr_pct", "dist_sma50", "dist_sma200",
                 "drop_day_rel_volume", "pct_from_entry", "pct_source"]
         d = disp[[c for c in cols if c in disp.columns]].copy()
+        for mc in ("rsi_14", "atr_pct", "dist_sma50", "dist_sma200", "drop_day_rel_volume"):
+            if mc in d.columns:                              # each column is one metric → its unit
+                d[mc] = [fmt_metric_value(mc, v) for v in d[mc]]
         if "pct_from_entry" in d.columns:
             d["שינוי נוכחי %"] = _signed_pct_str(d["pct_from_entry"])
             d = d.drop(columns=["pct_from_entry"])
