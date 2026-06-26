@@ -84,3 +84,35 @@ def test_entry_profile_gradual_renders_m5_safe(monkeypatch):
     low = _rendered_text(at).lower()
     hits = [t for t in FORBIDDEN if t in low]
     assert not hits, f"M5-forbidden term(s) rendered: {hits}"
+
+
+def test_spy_excess_unavailable_is_loud_not_silent(monkeypatch):
+    """SPY blocked (e.g. on cloud) → LOUD warning + honest basis label; NOT a silent
+    fall-back that pretends the user chose raw."""
+    _patch(monkeypatch)
+    monkeypatch.setattr(common, "_spy_closes_for", lambda *a, **k: {})   # simulate yfinance blocked
+    at = AppTest.from_file("pages/6_Entry_Profile_Intraday.py").run(timeout=30)
+    at.radio[0].set_value("תשואה-עודפת מול SPY").run()
+    assert not at.exception, f"page crashed: {at.exception}"
+    wtext = " ".join(str(w.value) for w in at.warning)
+    assert "לא זמין בדפלוי" in wtext                          # st.warning (loud), not a caption
+    assert "נפילה — SPY לא זמין" in _rendered_text(at)         # basis caption is honest (no lie)
+
+
+def test_spy_excess_available_uses_excess_basis(monkeypatch):
+    _patch(monkeypatch)
+    monkeypatch.setattr(common, "_spy_closes_for",
+                        lambda *a, **k: {"2026-06-12": 100.0, "2026-06-17": 103.0})
+    at = AppTest.from_file("pages/6_Entry_Profile_Intraday.py").run(timeout=30)
+    at.radio[0].set_value("תשואה-עודפת מול SPY").run()
+    assert not at.exception
+    text = _rendered_text(at)
+    assert "תשואה-עודפת מול SPY" in text                       # basis reflects the chosen mode
+    assert "לא זמין בדפלוי" not in " ".join(str(w.value) for w in at.warning)   # no fallback
+
+
+def test_strip_scope_tag_present(monkeypatch):
+    """The strip is always raw — the page must say the toggle affects only the D+3 table."""
+    _patch(monkeypatch)
+    at = AppTest.from_file("pages/6_Entry_Profile_Intraday.py").run(timeout=30)
+    assert "משפיע רק על טבלת-D+3" in _rendered_text(at)

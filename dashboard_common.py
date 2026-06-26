@@ -2069,17 +2069,21 @@ def render_entry_profile(kind):
                     horizontal=True, key=f"ep_mode_{kind}")
     if mode.startswith("תשואה"):
         spy = _spy_closes_for(fdaily, events)
-        outcome = spy_excess_outcome(fdaily, K, spy)
         if not spy:
-            st.caption("⚠️ SPY לא זמין כעת — נפילה חזרה לשינוי גולמי.")
-            outcome, mode = fixed_horizon_outcome(fdaily, K), "שינוי גולמי"
+            # LOUD fallback — yfinance is unavailable on this deploy (e.g. Streamlit
+            # Cloud). Do NOT silently relabel as raw; tell the user the request failed.
+            st.warning(f"מצב 'תשואה-עודפת מול SPY' לא זמין בדפלוי הזה (SPY closes שנטענו: "
+                       f"{len(spy)}) — נשאר בשינוי גולמי.")
+            outcome, basis = fixed_horizon_outcome(fdaily, K), "שינוי גולמי (נפילה — SPY לא זמין)"
+        else:
+            outcome, basis = spy_excess_outcome(fdaily, K, spy), "תשואה-עודפת מול SPY"
     else:
-        outcome = fixed_horizon_outcome(fdaily, K)
+        outcome, basis = fixed_horizon_outcome(fdaily, K), "שינוי גולמי"
     cnt = horizon_split_counts(outcome)
     ev_k = events.merge(outcome.rename("pct_k").reset_index(), on=["scan_date", "ticker"], how="left")
     sep = build_separation_table(ev_k, ENTRY_PROFILE_METRICS, pct_col="pct_k")
 
-    st.caption(f"פיצול לפי **{mode}** ב-D+{K} (עולה>0 / יורד≤0) · אותו גיל לכל אירוע — "
+    st.caption(f"פיצול לפי **{basis}** ב-D+{K} (עולה>0 / יורד≤0) · אותו גיל לכל אירוע — "
                f"הוסר ה-confound של 'שינוי נוכחי'. n: עולים={cnt['n_up']} · יורדים={cnt['n_down']} · "
                f"הגיעו ל-D+{K}: {cnt['n_reached']} מתוך {len(events)}.")
     st.info("**מקרא:** צבע רקע = כיוון ההפרדה (🟢 נוטה לעולים · 🔴 נוטה ליורדים, גוון רך) · "
@@ -2136,7 +2140,8 @@ def render_entry_profile(kind):
     st.subheader("🎞️ רצועת-אופקים — Cliff's delta לאורך D+3/5/7/10/15/20")
     st.caption("תא = חץ-כיוון + ערך Cliff's delta באותו אופק (▲ +0.42 / ▼ −0.55; −1..+1, לא %) · "
                "**מסגרת+מודגש = חוצה רצפת-רעש** (family-wise *בתוך* האופק) · — = לא הבשיל / מדגם דק. "
-               "מדד עקבי לאורך האופקים = אמיתי; מרצד = רעש. ללא תיקון-ריבוי בין אופקים (תיאורי). מתמלא עם ההבשלה.")
+               "מדד עקבי לאורך האופקים = אמיתי; מרצד = רעש. ללא תיקון-ריבוי בין אופקים (תיאורי). מתמלא עם ההבשלה. "
+               "הרצועה תמיד לפי **שינוי גולמי** — ה-toggle שמעל משפיע רק על טבלת-D+3, לא על הרצועה.")
     strip_long, smeta = _horizon_strip_cached(
         events, fdaily, tuple(ENTRY_PROFILE_METRICS), tuple(ENTRY_PROFILE_HORIZONS), 1000)
     st.caption("הגיעו לאופק (n): " +
