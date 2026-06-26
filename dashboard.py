@@ -15,11 +15,11 @@ totals, then "pick a page in the sidebar".
 Run locally:  streamlit run dashboard.py
 Streamlit Cloud entrypoint stays dashboard.py; pages/ is auto-discovered.
 """
-# Streamlit Cloud redeploy marker — 2026-06-25b (Group-C fundamentals fed into the
-# Entry-Profile separation table D+3 + horizon strip: the 6 pre-registered Finviz _num
-# fields — ROA, Debt/Eq, Current Ratio, Short Float, Gross Margin, P/B — plus derived
-# E/P, joined from fundamentals_snapshot point-in-time, each read PER-METRIC with no
-# composite/score. Pre-registration sha256 032f10eb. DESCRIPTIVE / M5-safe).
+# Streamlit Cloud redeploy marker — 2026-06-25c (Entry-Profile SPY-excess toggle fix,
+# display-only: LOUD st.warning when SPY is unavailable on the deploy (was a silent
+# fall-back to raw that looked like the toggle did nothing); honest `basis` label so the
+# header never pretends raw was chosen; scope tag noting the horizon strip is always raw
+# and the toggle affects only the D+3 table. DESCRIPTIVE / M5-safe).
 # Bump to force a clean reboot.
 import gspread
 import streamlit as st
