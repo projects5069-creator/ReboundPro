@@ -1,6 +1,10 @@
 # ReboundPro — Tasks
 
-## ▶ NEXT — HYP-002 integration (2026-06-19)
+## ▶ NEXT — Horizon-Sufficiency research (2026-06-26)
+- **Group C (fundamentals separation)** — **DONE**: pre-registration נעול (sha256, commit `0b4a835`, 2026-06-25) + 6 fundamentals two-sided wired לטבלת-ההפרדה (display/data-only, M5-safe). `research/group_c/PRE_REGISTRATION_groupC.md`.
+- **Horizon-Sufficiency C0 ("האם D+20 מספיק?")** — **CONCLUDED (proxy; אישור-חי ממתין לבשלות)**: pre-registration נעול (sha256 `aa235fe5`, commit `cef6e05`); gate-2 diagnosis + step-3 proxy re-measure על subset-שורד יחיד (n=241,962 mid+high, 8 משטרים, contamination 1.25%). **VERDICT: SUFFICIENT — by-default** (B2 median cum_pct שטוח ~0 בכל אופק, Δ ל-D+30/60/90 כולם CI∋0 ולא חוצים ε=0.5pp; proxy גבול-עליון, **לא עדות-להיפוך**; תואם TASK-C.1 no-edge). **B1 (δ של atr_pct) ממשיך לטפס מעבר D+20** (→ −0.165 ב-D+90, negligible→small) = תצפית **feature-quality תיאורית (M5-adjacent)**, מוחנה לשאלה-עתידית-נפרדת — **לא שינוי-חלון**. `POST_ANALYSIS_HORIZON` ללא-שינוי; M5 נשמר. memo: `research/horizon-sufficiency/HORIZON_C0_proxy_memo.md`.
+
+## ✅ DONE — HYP-002 integration (2026-06-19→25)
 - **TASK-A** — Document HYP-002 long-rebound thesis (composite distress+rsi + VIX regime-gate) + register in HYPOTHESES.md (DONE — `docs/HYP-002_long_rebound_thesis.md` + `docs/HYPOTHESES.md`).
 - **TASK-B** — Fix BuildSpec DropsLab drift: Ambroseius→projects5069-creator, sheet→1XM-qId7, tab→drops_raw/post (DONE).
 - **TASK-C** — Resolve Phase-0 data source: DropsLab vs ReboundPro parity. **(parity ANALYZED — `research/phase0/TASK-C_parity_memo.md`):** HYP-002 z-constants + threshold −1.7733 do **NOT** transfer to ReboundPro — dual gap: definition (~28% of close-to-close drops miss the intraday open→low rule) + universe (only 12.7% of DropsLab survive RB's mid+large floor; HYP-002's edge sits in the nano/micro RB excludes). Distress center shifts −59→−37 ⇒ discovery threshold fires 1.7% on intraday / 30.4% on gradual (vs ~10%). Live count corrected: RB = **200** events (not ~77) but only ~1 week (6/12–18) — §5 span gate far from met.

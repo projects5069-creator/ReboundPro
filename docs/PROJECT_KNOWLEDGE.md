@@ -1,7 +1,9 @@
 # ReboundPro — Project Knowledge (זיכרון תפעולי)
 
 *זהו הזיכרון התפעולי — עובדות-קרקע על המערכת כפי שהיא בפועל. אסטרטגיה יציבה ב-MASTERPLAN; משימות ב-TASKS; היסטוריה ב-ACTIONS_LOG.*
-*עודכן: 2026-06-22 · אבן-דרך נוכחית: **M3 (צבירה)**.*
+*עודכן: 2026-06-26 · אבן-דרך נוכחית: **M3 (צבירה)**.*
+*ספירת-אירועים חיה (אומת 2026-06-26 מה-Sheet): **527** ב-`watchlist_live` (150 `intraday_drop` + 377 `gradual_drop`); `post_analysis` = 478 partial + 49 pending_forward. בשלות-forward עדיין מוקדמת (frontier ~D+5–9; אף אירוע טרם הגיע D+10).*
+*מחקר-אופק (Horizon-Sufficiency C0) — **CONCLUDED (proxy; אישור-חי ממתין לבשלות)**: על subset-שורד יחיד (n=241,962 mid+high) **SUFFICIENT — by-default** (B2 median cum_pct שטוח ~0, לא מטפס מעבר D+20; proxy גבול-עליון, לא עדות-להיפוך). **B1 (δ של atr_pct) ממשיך לטפס מעבר D+20** (→ −0.165 ב-D+90) = תצפית feature-quality תיאורית (M5-adjacent), מוחנה לשאלה-עתידית-נפרדת — לא שינוי-חלון. `POST_ANALYSIS_HORIZON` ללא-שינוי; M5 נשמר.*
 
 ## בשורה אחת
 מערכת מחקר long (סימולציה בלבד) שתופסת point-in-time מניות NASDAQ+NYSE נזילות שצנחו ≥10% תוך-יומי, ואוספת תוצאות D1..D+20 כדי להכריע ב-M4 אם קיים יתרון נטו. אין מנוע מסחר עד M4=go.
