@@ -14,6 +14,7 @@ Usage:
 """
 import argparse
 import logging
+import random
 import time
 from datetime import datetime
 
@@ -66,6 +67,23 @@ def fetch(ticker):
     return finvizfinance(ticker).ticker_fundament()
 
 
+def _fetch_with_retry(ticker):
+    """Finviz fetch with bounded exponential backoff + jitter. Raises the last
+    exception only after FINVIZ_FETCH_RETRIES attempts (throttle is transient)."""
+    last = None
+    for attempt in range(config.FINVIZ_FETCH_RETRIES):
+        try:
+            return fetch(ticker)
+        except Exception as e:  # noqa: BLE001 — Finviz parse/throttle errors vary
+            last = e
+            if attempt < config.FINVIZ_FETCH_RETRIES - 1:
+                back = config.FINVIZ_FETCH_BACKOFF * (2 ** attempt) + random.uniform(0, 1)
+                log.info("fundamentals %s retry %d/%d in %.1fs (%s)", ticker,
+                         attempt + 1, config.FINVIZ_FETCH_RETRIES, back, e)
+                time.sleep(back)
+    raise last
+
+
 def build_row(scan_date, ticker, raw, captured_at):
     row = {"scan_date": scan_date, "ticker": ticker, "captured_at": captured_at}
     for f in config.FINVIZ_FUNDAMENT_FIELDS:
@@ -78,24 +96,51 @@ def build_row(scan_date, ticker, raw, captured_at):
     return row
 
 
-def collect(pairs):
-    """pairs: iterable of (scan_date, ticker). Returns list of row dicts."""
+def collect(pairs, time_budget_s=None):
+    """pairs: iterable of (scan_date, ticker). Returns list of row dicts.
+
+    Resilient to Finviz throttle (bounded retry/backoff). On exhausted failure
+    writes NO row — no poison FETCH_ERROR stub (kept Group C clean; the pair stays
+    uncaptured and the PIT guard in main() prevents a later-day re-fetch). Stops
+    when `time_budget_s` (default config.FINVIZ_COLLECT_BUDGET_S) is exhausted so
+    the EOD job never exceeds the Actions timeout.
+    """
+    budget = config.FINVIZ_COLLECT_BUDGET_S if time_budget_s is None else time_budget_s
+    start = time.monotonic()
     now = datetime.now(ET).strftime("%Y-%m-%d %H:%M:%S %Z")
-    rows, n_fields = [], 0
-    for sd, tk in pairs:
+    pairs = list(pairs)
+    rows = []
+    for i, (sd, tk) in enumerate(pairs):
+        if time.monotonic() - start > budget:
+            log.warning("fundamentals collect budget %.0fs exhausted; %d pairs unprocessed",
+                        budget, len(pairs) - i)
+            break
         try:
-            raw = fetch(tk)
-            row = build_row(sd, tk, raw, now)
+            row = build_row(sd, tk, _fetch_with_retry(tk), now)
             n_fields = sum(1 for f in config.FINVIZ_FUNDAMENT_FIELDS if row.get(f))
             rows.append(row)
             log.info("fundamentals %s %s: %d/%d fields", sd, tk, n_fields,
                      len(config.FINVIZ_FUNDAMENT_FIELDS))
-        except Exception as e:
-            log.warning("fundamentals %s %s FAILED: %s", sd, tk, e)
-            rows.append({"scan_date": sd, "ticker": tk, "captured_at": now,
-                         "Company": f"FETCH_ERROR:{e}"})
-        time.sleep(config.RATE_LIMIT_SLEEP)
+        except Exception as e:  # noqa: BLE001
+            log.warning("fundamentals %s %s FAILED after %d retries (no row written): %s",
+                        sd, tk, config.FINVIZ_FETCH_RETRIES, e)
+        time.sleep(config.FINVIZ_FETCH_SLEEP + random.uniform(0, 0.5))
     return rows
+
+
+def select_target_pairs(watchlist_rows, header, target_date):
+    """(scan_date,ticker) pairs for ONE scan_date only — never a cross-date sweep.
+    A historical pair that failed at its D0 EOD run is therefore never swept up by
+    a later-day run (which would stamp current Finviz values on an old D0)."""
+    si, ti = header.index("scan_date"), header.index("ticker")
+    return [(r[si], r[ti]) for r in watchlist_rows
+            if len(r) > max(si, ti) and r[si] == target_date]
+
+
+def is_pit_refused(target_date, today, force=False):
+    """True when fetching `target_date` would be look-ahead: a PAST scan_date
+    (current Finviz values on an old D0). Override only with --force."""
+    return (not force) and target_date < today
 
 
 def to_matrix(rows):
@@ -119,15 +164,22 @@ def main():
         log.error("No SHEET_ID configured.")
         return []
 
+    # PIT guard: only ONE scan_date per run, and never a PAST date without --force
+    # (current Finviz values stamped on an old D0 = look-ahead → breaks Group C PIT).
+    today = datetime.now(ET).strftime("%Y-%m-%d")
+    target = args.date or today
+    if is_pit_refused(target, today, args.force):
+        log.error("Refusing fundamentals fetch for past scan_date %s (current Finviz "
+                  "values on an old D0 = look-ahead). Re-run with --force only if you "
+                  "deliberately accept the PIT violation.", target)
+        return []
+
     import sheets_manager as sm
     wh, wd = sm.read_rows(config.SHEET_ID, config.TAB_WATCHLIST)
     if not wd:
         log.info("watchlist_live empty — nothing to enrich.")
         return []
-    wi = {c: i for i, c in enumerate(wh)}
-    pairs = [(r[wi["scan_date"]], r[wi["ticker"]]) for r in wd]
-    if args.date:
-        pairs = [p for p in pairs if p[0] == args.date]
+    pairs = select_target_pairs(wd, wh, target)   # single scan_date — no cross-date sweep
 
     # skip already-captured (unless --force)
     if not args.force:

@@ -4,6 +4,8 @@
 *עודכן: 2026-06-26 · אבן-דרך נוכחית: **M3 (צבירה)**.*
 *ספירת-אירועים חיה (אומת 2026-06-26 מה-Sheet): **527** ב-`watchlist_live` (150 `intraday_drop` + 377 `gradual_drop`); `post_analysis` = 478 partial + 49 pending_forward. בשלות-forward עדיין מוקדמת (frontier ~D+5–9; אף אירוע טרם הגיע D+10).*
 *מחקר-אופק (Horizon-Sufficiency C0) — **CONCLUDED (proxy; אישור-חי ממתין לבשלות)**: על subset-שורד יחיד (n=241,962 mid+high) **SUFFICIENT — by-default** (B2 median cum_pct שטוח ~0, לא מטפס מעבר D+20; proxy גבול-עליון, לא עדות-להיפוך). **B1 (δ של atr_pct) ממשיך לטפס מעבר D+20** (→ −0.165 ב-D+90) = תצפית feature-quality תיאורית (M5-adjacent), מוחנה לשאלה-עתידית-נפרדת — לא שינוי-חלון. `POST_ANALYSIS_HORIZON` ללא-שינוי; M5 נשמר.*
+*`fundamentals_snapshot` — כיסוי בפועל (26/6): intraday ~79%, **gradual ~12%** (Finviz throttle בריצת-ה-EOD ה-bursty → `'NoneType'...find_all'`). **תוקן קדימה** ב-`fundamentals.py` (retry/backoff+jitter + תקציב-זמן; B1). **הכיסוי ההיסטורי אינו בר-שחזור** — re-fetch של Finviz מחזיר ערכים-נוכחיים על D0 ישן = look-ahead ששובר PIT (לכן ללא backfill; `main()` חוסם תאריך-עבר ללא `--force`).*
+*סייג Group C: הפרדת-fundamentals ל-**gradual מורעבת ולא-אמינה** עד שכיסוי-forward יצטבר אחרי B1; ה-12% ההיסטורי לא בר-שחזור-PIT.*
 
 ## בשורה אחת
 מערכת מחקר long (סימולציה בלבד) שתופסת point-in-time מניות NASDAQ+NYSE נזילות שצנחו ≥10% תוך-יומי, ואוספת תוצאות D1..D+20 כדי להכריע ב-M4 אם קיים יתרון נטו. אין מנוע מסחר עד M4=go.
