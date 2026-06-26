@@ -68,4 +68,4 @@
 
 ## סטטוס (2026-06-14)
 - M1 collector (scanner + post_analysis) · M2 intraday scanner · M3 dashboard (view-only) · M4 fundamentals snapshot — **חיים** ב-`projects5069-creator/ReboundPro` (פרטי), עם workflow יומי + intraday.
-- M5 (ניקוד/החלטה) — **ממתין** להכרעת M4. ראה PROJECT_STATE.md לפרטים מלאים.
+- M5 (ניקוד/החלטה) — **ממתין** להכרעת M4. ראה `docs/PROJECT_KNOWLEDGE.md` (מקור-האמת התפעולי; `PROJECT_STATE.md` deprecated).

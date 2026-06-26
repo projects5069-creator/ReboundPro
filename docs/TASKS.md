@@ -1,6 +1,10 @@
 # ReboundPro — Tasks
 
-## ▶ NEXT — HYP-002 integration (2026-06-19)
+## ▶ NEXT — Horizon-Sufficiency research (2026-06-26)
+- **Group C (fundamentals separation)** — **DONE**: pre-registration נעול (sha256, commit `0b4a835`, 2026-06-25) + 6 fundamentals two-sided wired לטבלת-ההפרדה (display/data-only, M5-safe). `research/group_c/PRE_REGISTRATION_groupC.md`.
+- **Horizon-Sufficiency C0 ("האם D+20 מספיק?")** — **נוכחי**: pre-registration **נעול** (sha256 `aa235fe5`, commit `cef6e05`, 2026-06-26) — B1/B2 co-primary, אסימטריית-survivorship, B2-פוסק. **gate-2 read-only diagnosis DONE** (`research/horizon-sufficiency/HORIZON_C0_gate2_diagnosis.md`): live לא יכול לענות (527 ev, frontier ~D+5–9, cap=20); proxy היסטורי `measured_old` 786,872 ev (mid+high ≈272k) אך מדוד-רק-D+20 → step-3 ימדוד-מחדש ל-D+90; גרדיאנט-survivorship לא-מדיד מ-cache-שורד-בלבד. **ממתין להכרעת gate-2** (re-measure proxy מול lock-and-wait). אין שינוי חלון-איסוף על proxy לבד (C0 §ג).
+
+## ✅ DONE — HYP-002 integration (2026-06-19→25)
 - **TASK-A** — Document HYP-002 long-rebound thesis (composite distress+rsi + VIX regime-gate) + register in HYPOTHESES.md (DONE — `docs/HYP-002_long_rebound_thesis.md` + `docs/HYPOTHESES.md`).
 - **TASK-B** — Fix BuildSpec DropsLab drift: Ambroseius→projects5069-creator, sheet→1XM-qId7, tab→drops_raw/post (DONE).
 - **TASK-C** — Resolve Phase-0 data source: DropsLab vs ReboundPro parity. **(parity ANALYZED — `research/phase0/TASK-C_parity_memo.md`):** HYP-002 z-constants + threshold −1.7733 do **NOT** transfer to ReboundPro — dual gap: definition (~28% of close-to-close drops miss the intraday open→low rule) + universe (only 12.7% of DropsLab survive RB's mid+large floor; HYP-002's edge sits in the nano/micro RB excludes). Distress center shifts −59→−37 ⇒ discovery threshold fires 1.7% on intraday / 30.4% on gradual (vs ~10%). Live count corrected: RB = **200** events (not ~77) but only ~1 week (6/12–18) — §5 span gate far from met.
