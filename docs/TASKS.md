@@ -1,6 +1,7 @@
 # ReboundPro — Tasks
 
-## ▶ NEXT — Horizon-Sufficiency research (2026-06-26)
+## ▶ NEXT — fundamentals de-burst verification (2026-06-27)
+- **אימות de-burst של fundamentals (EOD יום-ב' 29/6)** — אחרי ה-EOD הראשון עם 6s-pacing: על **scan_date של יום-ב'** למדוד כיסוי-gradual מול intraday-control + לוג-fetch (נוסו/נכשלו/"N new"). **עלה משמעותית (→ לכיוון 79%) → סוגרים** · **6s-paged עדיין נכשל → הכרעת-Sharadar (GATE-B**, מקור-fundamentals ידידותי-datacenter). de-burst על main: `35b7856`. (היסטורי = 12% gradual, לא בר-שחזור-PIT.)
 - **Group C (fundamentals separation)** — **DONE**: pre-registration נעול (sha256, commit `0b4a835`, 2026-06-25) + 6 fundamentals two-sided wired לטבלת-ההפרדה (display/data-only, M5-safe). `research/group_c/PRE_REGISTRATION_groupC.md`.
 - **Horizon-Sufficiency C0 ("האם D+20 מספיק?")** — **CONCLUDED (proxy; אישור-חי ממתין לבשלות)**: pre-registration נעול (sha256 `aa235fe5`, commit `cef6e05`); gate-2 diagnosis + step-3 proxy re-measure על subset-שורד יחיד (n=241,962 mid+high, 8 משטרים, contamination 1.25%). **VERDICT: SUFFICIENT — by-default** (B2 median cum_pct שטוח ~0 בכל אופק, Δ ל-D+30/60/90 כולם CI∋0 ולא חוצים ε=0.5pp; proxy גבול-עליון, **לא עדות-להיפוך**; תואם TASK-C.1 no-edge). **B1 (δ של atr_pct) ממשיך לטפס מעבר D+20** (→ −0.165 ב-D+90, negligible→small) = תצפית **feature-quality תיאורית (M5-adjacent)**, מוחנה לשאלה-עתידית-נפרדת — **לא שינוי-חלון**. `POST_ANALYSIS_HORIZON` ללא-שינוי; M5 נשמר. memo: `research/horizon-sufficiency/HORIZON_C0_proxy_memo.md`.
 

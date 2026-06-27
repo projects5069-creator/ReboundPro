@@ -1,7 +1,7 @@
 # ReboundPro — Project Knowledge (זיכרון תפעולי)
 
 *זהו הזיכרון התפעולי — עובדות-קרקע על המערכת כפי שהיא בפועל. אסטרטגיה יציבה ב-MASTERPLAN; משימות ב-TASKS; היסטוריה ב-ACTIONS_LOG.*
-*עודכן: 2026-06-26 · אבן-דרך נוכחית: **M3 (צבירה)**.*
+*עודכן: 2026-06-27 · אבן-דרך נוכחית: **M3 (צבירה)**.*
 *ספירת-אירועים חיה (אומת 2026-06-26 מה-Sheet): **527** ב-`watchlist_live` (150 `intraday_drop` + 377 `gradual_drop`); `post_analysis` = 478 partial + 49 pending_forward. בשלות-forward עדיין מוקדמת (frontier ~D+5–9; אף אירוע טרם הגיע D+10).*
 *מחקר-אופק (Horizon-Sufficiency C0) — **CONCLUDED (proxy; אישור-חי ממתין לבשלות)**: על subset-שורד יחיד (n=241,962 mid+high) **SUFFICIENT — by-default** (B2 median cum_pct שטוח ~0, לא מטפס מעבר D+20; proxy גבול-עליון, לא עדות-להיפוך). **B1 (δ של atr_pct) ממשיך לטפס מעבר D+20** (→ −0.165 ב-D+90) = תצפית feature-quality תיאורית (M5-adjacent), מוחנה לשאלה-עתידית-נפרדת — לא שינוי-חלון. `POST_ANALYSIS_HORIZON` ללא-שינוי; M5 נשמר.*
 *`fundamentals_snapshot` — כיסוי-forward נמוך (Finviz **burst-throttle** בריצת-ה-EOD → `'NoneType'...find_all'`; **לא** חסימת-IP — ה-intraday low-burst מקבל ~79% מאותו datacenter-IP). **B1 (retry/backoff) נכשל והחמיר:** retries=4 הגדיל burst → EOD 6/26 ירד **50%→0%** (gradual+intraday 0/65). **GATE-A (27/6):** ניסיון-יחיד (`FINVIZ_FETCH_RETRIES=1`) + pacing איטי (`FINVIZ_FETCH_SLEEP=6.0`+jitter, ~7–8min לריצה) + תקציב per-run — הכיוון הוא **פחות-burst**. **אימות ממתין ל-EOD של יום-ב'** (שבת/א' שוק סגור). **הכיסוי ההיסטורי אינו בר-שחזור** — re-fetch מחזיר ערכים-נוכחיים על D0 ישן = look-ahead (לכן ללא backfill; `main()` חוסם תאריך-עבר ללא `--force`).*
