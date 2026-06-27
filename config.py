@@ -281,13 +281,18 @@ RISK_OFF_SPY_PCT = -1.0              # SPY day move ≤ this → "risk_off" regi
 # ── Misc ─────────────────────────────────────────────────────────────────────
 RATE_LIMIT_SLEEP = 0.30             # seconds between per-ticker yfinance calls
 
-# Finviz fundamentals fetch — slower + resilient than the yfinance path: Finviz
-# throttles the bursty EOD scrape (gradual+EOD candidates back-to-back) → the
-# parser gets a non-table page → "'NoneType' object has no attribute 'find_all'".
-FINVIZ_FETCH_SLEEP = 1.0            # base seconds between Finviz fetches (+ jitter)
-FINVIZ_FETCH_RETRIES = 4           # attempts per ticker before giving up
-FINVIZ_FETCH_BACKOFF = 2.0         # exponential backoff base sec (2,4,8…) + jitter
-FINVIZ_COLLECT_BUDGET_S = 900      # total time budget per collect() pass (< Actions 30min)
+# Finviz fundamentals fetch — Finviz BURST-throttles the EOD scrape (gradual+EOD
+# candidates back-to-back) → non-table page → "'NoneType'...find_all'". It is NOT
+# an IP block: the intraday scanner gets ~79% from the SAME Actions datacenter IP
+# because it is low-burst (spread over the day). So the lever is FEWER requests:
+# single attempt (no retry amplification) + slow pacing. (Retrying a rate-limiter
+# made it worse — 6/26 EOD went 50%→0% at retries=4.)
+FINVIZ_FETCH_SLEEP = 6.0           # base sec between Finviz fetches (+ jitter) — de-burst.
+#   ~65 EOD candidates × ~6.5s ≈ 7–8 min (one shot Monday) — far under budget/timeout.
+#   A 6s-paced fetch that STILL fails ⇒ structural (→ Sharadar), not "still too fast".
+FINVIZ_FETCH_RETRIES = 1          # attempts per ticker — 1 = single, NO retry burst
+FINVIZ_FETCH_BACKOFF = 2.0        # backoff base sec if retries>1 (unused at 1) + jitter
+FINVIZ_COLLECT_BUDGET_S = 1200    # total time budget PER RUN (process), << Actions 30min
 
 HISTORY_DAYS_FETCH = 400            # calendar days pulled per candidate — intraday daily_hist.
 #   400 cal ≈ 275 trading days → SMA200 computable for source=intraday too (90 cal ≈ 63

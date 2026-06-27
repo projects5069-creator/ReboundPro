@@ -24,6 +24,8 @@ from finvizfinance.quote import finvizfinance
 import config
 
 ET = pytz.timezone("America/New_York")
+_PROCESS_START = time.monotonic()   # per-RUN clock: the time budget spans the whole
+#   process (scanner + gradual each call collect()), not each call in isolation.
 log = logging.getLogger("fundamentals")
 logging.basicConfig(level=logging.INFO, format="%(asctime)s %(levelname)-7s %(message)s",
                     datefmt="%H:%M:%S")
@@ -106,13 +108,12 @@ def collect(pairs, time_budget_s=None):
     the EOD job never exceeds the Actions timeout.
     """
     budget = config.FINVIZ_COLLECT_BUDGET_S if time_budget_s is None else time_budget_s
-    start = time.monotonic()
     now = datetime.now(ET).strftime("%Y-%m-%d %H:%M:%S %Z")
     pairs = list(pairs)
     rows = []
     for i, (sd, tk) in enumerate(pairs):
-        if time.monotonic() - start > budget:
-            log.warning("fundamentals collect budget %.0fs exhausted; %d pairs unprocessed",
+        if time.monotonic() - _PROCESS_START > budget:   # per-RUN, not per-call
+            log.warning("fundamentals collect budget %.0fs (per-run) exhausted; %d pairs unprocessed",
                         budget, len(pairs) - i)
             break
         try:
@@ -122,9 +123,9 @@ def collect(pairs, time_budget_s=None):
             log.info("fundamentals %s %s: %d/%d fields", sd, tk, n_fields,
                      len(config.FINVIZ_FUNDAMENT_FIELDS))
         except Exception as e:  # noqa: BLE001
-            log.warning("fundamentals %s %s FAILED after %d retries (no row written): %s",
+            log.warning("fundamentals %s %s FAILED after %d attempt(s) (no row written): %s",
                         sd, tk, config.FINVIZ_FETCH_RETRIES, e)
-        time.sleep(config.FINVIZ_FETCH_SLEEP + random.uniform(0, 0.5))
+        time.sleep(config.FINVIZ_FETCH_SLEEP + random.uniform(0, 1.0))   # de-burst pacing
     return rows
 
 
