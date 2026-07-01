@@ -20,6 +20,7 @@ health_log.jsonl
 research/phase0/*.csv
 research/phase0/*.parquet
 research/phase0/verdict.json
+research/historical/
 
 # Claude Code local settings (per-machine)
 .claude/settings.local.json
