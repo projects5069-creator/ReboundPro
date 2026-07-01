@@ -418,10 +418,12 @@ def build_summary(scan_date, reasons):
 
 
 def backfill_intraday_prior_context(scan_date):
-    """Coverage fix (M3.6 gap): intraday_scanner stays light (no year-long pull in
-    the 10-min loop), so source="intraday" rows lack prior-decline context. Fill it
-    HERE in the once-a-day EOD run — only for this scan_date's intraday rows that are
-    still missing it, one history pull per such ticker. Returns count filled.
+    """Coverage fix (M3.6/ROOT2 gap): intraday_scanner stays light (no year-long
+    pull in the 10-min loop), so source="intraday" rows lack the full descriptive
+    context set (prior-decline + vix_level / drop_day_rel_volume / sector_momentum).
+    Fill it HERE in the once-a-day EOD run — only for THIS scan_date's intraday rows
+    still missing it (forward-only; never a cross-date historical sweep), one history
+    pull per such ticker. Returns count filled.
     (Descriptive context only — no signal, no decision.)"""
     import sheets_manager as sm
     wh, wd = sm.read_rows(config.SHEET_ID, config.TAB_WATCHLIST)
@@ -431,27 +433,23 @@ def backfill_intraday_prior_context(scan_date):
     if not all(k in idx for k in ("scan_date", "ticker", "source", "prior_decline_20d_pct")):
         return 0
     sdc, tkc, srcc, pcc = idx["scan_date"], idx["ticker"], idx["source"], idx["prior_decline_20d_pct"]
-    need = [r[tkc] for r in wd
+    secc = idx.get("sector")   # defensive: sector needed for sector_momentum
+    need = [(r[tkc], (r[secc] if (secc is not None and secc < len(r)) else ""))
+            for r in wd
             if r[sdc] == str(scan_date) and r[srcc] == "intraday"
             and (pcc >= len(r) or r[pcc] in ("", None))]
     if not need:
         return 0
-    log.info("Backfilling prior-decline for %d intraday rows of %s.", len(need), scan_date)
+    log.info("Backfilling context for %d intraday rows of %s.", len(need), scan_date)
     rows = []
-    for tk in need:
+    for tk, sector in need:
         try:
-            h = yf.Ticker(tk).history(
-                start=str(scan_date - timedelta(days=config.EOD_HISTORY_DAYS)),
-                end=str(scan_date + timedelta(days=1)), auto_adjust=True)
-            h = h[h.index.date <= scan_date]
-            prior = h[h.index.date < scan_date]
-            today = h[h.index.date == scan_date]
-            if h.empty or today.empty:
-                continue
-            cl = float(today["Close"].iloc[-1])
-            # partial row: upsert_by_key merges by column NAME, preserving all others
-            rows.append({"scan_date": str(scan_date), "ticker": tk,
-                         **prior_context(h, prior, cl)})
+            # full context set (prior-decline + vix/rel-vol/sector-momentum) from ONE
+            # history pull, point-in-time (<= scan_date). partial row: upsert_by_key
+            # merges by column NAME, preserving all others.
+            row = _context_for_row(scan_date, tk, sector)
+            if row:
+                rows.append(row)
         except Exception as e:
             log.warning("backfill %s failed: %s", tk, e)
         time.sleep(config.RATE_LIMIT_SLEEP)
